@@ -8,8 +8,7 @@ require (
 	github.com/charmbracelet/lipgloss v0.6.0
 	github.com/gorilla/websocket v1.5.0
 	github.com/hyphengolang/prelude v0.1.3
-	github.com/rog-golang-buddies/rmx v0.0.0-20230101154118-1c2eb0b34ff6
-	golang.org/x/term v0.3.0
+	golang.org/x/term v0.4.0
 )
 
 require (
@@ -26,6 +25,6 @@ require (
 	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/muesli/termenv v0.13.0 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
-	golang.org/x/sys v0.3.0 // indirect
+	golang.org/x/sys v0.4.0 // indirect
 	golang.org/x/text v0.3.7 // indirect
 )

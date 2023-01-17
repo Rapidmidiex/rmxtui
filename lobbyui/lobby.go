@@ -53,14 +53,14 @@ var (
 // Message types
 type errMsg struct{ err error }
 
-type Session struct {
-	Id   string `json:"id"` // TODO: Need to fix the API to return "id"
+type Jam struct {
+	ID   string `json:"id"`
 	Name string `json:"name"`
 	// UserCount int    `json:"userCount"`
 }
 
 type jamsResp struct {
-	Sessions []Session `json:"sessions"`
+	Rooms []Jam `json:"rooms"`
 }
 
 type jamCreated struct {
@@ -73,7 +73,7 @@ type jamCreated struct {
 func (e errMsg) Error() string { return e.err.Error() }
 
 // Commands
-func FetchSessions(baseURL string) tea.Cmd {
+func ListJams(baseURL string) tea.Cmd {
 	return func() tea.Msg {
 		// Create an HTTP client and make a GET request.
 		c := &http.Client{Timeout: 10 * time.Second}
@@ -102,7 +102,7 @@ func FetchSessions(baseURL string) tea.Cmd {
 type Model struct {
 	wsURL    string // Websocket endpoint
 	apiURL   string // REST API base endpoint
-	sessions []Session
+	jams     []Jam
 	jamTable table.Model
 	help     tea.Model
 	loading  bool
@@ -132,7 +132,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// There was an error. Note it in the model.
 		m.err = msg
 	case jamsResp:
-		m.sessions = msg.Sessions
+		m.jams = msg.Rooms
 		m.jamTable = makeJamsTable(m)
 		m.jamTable.Focus()
 		m.loading = false
@@ -176,7 +176,7 @@ func (m Model) View() string {
 
 	// Jam Session Table
 	{
-		if len(m.sessions) > 0 {
+		if len(m.jams) > 0 {
 			jamTable := baseStyle.Width(width).Render(m.jamTable.View())
 			doc.WriteString(jamTable)
 		} else if !m.loading {
@@ -225,8 +225,8 @@ func makeJamsTable(m Model) table.Model {
 
 	rows := make([]table.Row, 0)
 
-	for _, s := range m.sessions {
-		row := table.Row{"Name Here", s.Id, "0"}
+	for _, j := range m.jams {
+		row := table.Row{j.Name, j.ID, "0"}
 		rows = append(rows, row)
 	}
 

@@ -9,7 +9,7 @@
       "type": "go",
       "request": "launch",
       "mode": "auto",
-      "program": "${workspaceFolder}/ui/terminal",
+      "program": "${workspaceFolder}/cmd/",
       "cwd": "${workspaceFolder}",
       "args": ["--server", "http://localhost:9003"],
       "console": "integratedTerminal"

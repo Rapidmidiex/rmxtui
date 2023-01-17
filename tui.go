@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/hyphengolang/prelude/types/suid"
 
-	"github.com/rog-golang-buddies/rmx/ui/terminal/tui/jamui"
-	"github.com/rog-golang-buddies/rmx/ui/terminal/tui/lobbyui"
+	"github.com/rapidmidiex/rmxtui/jamui"
+	"github.com/rapidmidiex/rmxtui/lobbyui"
 )
 
 // ********
@@ -55,7 +55,7 @@ func NewModel(serverHostURL string) (mainModel, error) {
 }
 
 func (m mainModel) Init() tea.Cmd {
-	return lobbyui.FetchSessions(m.RESTendpoint)
+	return lobbyui.ListJams(m.RESTendpoint)
 }
 
 func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -114,7 +114,11 @@ func (m mainModel) View() string {
 
 func Run() {
 	// TODO: Get from args, user input, or env
-	const serverHostURL = "http://localhost:9003"
+	serverHostURL := os.Getenv("RMX_SERVER_HOST")
+	if serverHostURL == "" {
+		serverHostURL = "https://rmx.fly.dev"
+	}
+
 	m, err := NewModel(serverHostURL)
 	if err != nil {
 		bail(err)
