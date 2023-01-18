@@ -37,8 +37,11 @@ var (
 		Padding(0, 1)
 )
 
-// Message Types
-type Entered struct{}
+// Command Types
+type Connected struct {
+	WS    *websocket.Conn
+	JamID string
+}
 
 type pianoKey struct {
 	noteNumber int    // MIDI note number ie: 72
@@ -47,10 +50,14 @@ type pianoKey struct {
 }
 
 type Model struct {
-	piano      []pianoKey          // Piano keys. {"q": pianoKey{72, "C5", "q", ...}}
-	activeKeys map[string]struct{} // Currently active piano keys
-	Socket     *websocket.Conn     // Websocket connection for current Jam Session
-	ID         string              // Jam Session ID
+	// Piano keys. {"q": pianoKey{72, "C5", "q", ...}}
+	piano []pianoKey
+	// Currently active piano keys
+	activeKeys map[string]struct{}
+	// Websocket connection for current Jam Session
+	Socket *websocket.Conn
+	// Jam Session ID
+	ID string
 }
 
 func New() Model {
@@ -88,8 +95,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	// Entered the Jam Session
-	case Entered:
-		fmt.Println(m)
+	case Connected:
+		m.Socket = msg.WS
+		m.ID = msg.JamID
 	}
 
 	return m, nil
@@ -116,9 +124,4 @@ func (m Model) View() string {
 	)
 	doc.WriteString(keyboard + "\n\n")
 	return docStyle.Render(doc.String())
-}
-
-// Commands
-func Enter() tea.Msg {
-	return Entered{}
 }

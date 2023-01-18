@@ -6,6 +6,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/gorilla/websocket"
 	"github.com/hyphengolang/prelude/types/suid"
 
 	"github.com/rapidmidiex/rmxtui/jamui"
@@ -18,26 +19,31 @@ import (
 // https://www.youtube.com/watch?v=uJ2egAkSkjg&t=319s
 // ********
 
-type Session struct {
-	Id suid.UUID `json:"id"`
-	// UserCount int    `json:"userCount"`
-}
+type (
+	Session struct {
+		Id suid.UUID `json:"id"`
+		// UserCount int    `json:"userCount"`
+	}
 
-type appView int
+	appView int
+
+	// Message types
+	errMsg struct{ err error }
+
+	mainModel struct {
+		curView      appView
+		lobby        tea.Model
+		jam          tea.Model
+		RESTendpoint string
+		WSendpoint   string
+		// jamSocket    *websocket.Conn // Websocket connection to a Jam Session
+	}
+)
 
 const (
 	jamView appView = iota
 	lobbyView
 )
-
-type mainModel struct {
-	curView      appView
-	lobby        tea.Model
-	jam          jamui.Model
-	RESTendpoint string
-	WSendpoint   string
-	// jamSocket    *websocket.Conn // Websocket connection to a Jam Session
-}
 
 func NewModel(serverHostURL string) (mainModel, error) {
 	wsHostURL, err := url.Parse(serverHostURL)
@@ -48,7 +54,7 @@ func NewModel(serverHostURL string) (mainModel, error) {
 
 	return mainModel{
 		curView:      lobbyView,
-		lobby:        lobbyui.New(wsHostURL.String()+"/ws", serverHostURL+"/api/v1"),
+		lobby:        lobbyui.New(serverHostURL + "/api/v1"),
 		jam:          jamui.New(),
 		RESTendpoint: serverHostURL + "/api/v1",
 	}, nil
@@ -74,32 +80,20 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
 		}
-	case lobbyui.JamConnected:
+	case lobbyui.JamSelected:
+		cmd = m.jamConnect(msg.ID)
 		m.curView = jamView
-		m.jam.Socket = msg.WS
-		m.jam.ID = msg.JamID
-		cmds = append(cmds, jamui.Enter)
+		cmds = append(cmds, cmd)
 	}
 
 	// Call sub-model Updates
 	switch m.curView {
 	case lobbyView:
-		newLobby, newCmd := m.lobby.Update(msg)
-		lobbyModel, ok := newLobby.(lobbyui.Model)
-		if !ok {
-			panic("could not perform assertion on lobbyui model")
-		}
-		m.lobby = lobbyModel
-		cmd = newCmd
+		m.lobby, cmd = m.lobby.Update(msg)
 	case jamView:
-		newJam, newCmd := m.jam.Update(msg)
-		jamModel, ok := newJam.(jamui.Model)
-		if !ok {
-			panic("could not perform assertion on jamui model")
-		}
-		m.jam = jamModel
-		cmd = newCmd
+		m.jam, cmd = m.jam.Update(msg)
 	}
+
 	// Run all commands from sub-model Updates
 	cmds = append(cmds, cmd)
 	return m, tea.Batch(cmds...)
@@ -133,5 +127,19 @@ func bail(err error) {
 	if err != nil {
 		fmt.Printf("Uh oh, there was an error: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+func (m mainModel) jamConnect(jamID string) tea.Cmd {
+	return func() tea.Msg {
+		jURL := m.WSendpoint + "/jam/" + jamID
+		ws, _, err := websocket.DefaultDialer.Dial(jURL, nil)
+		if err != nil {
+			return errMsg{fmt.Errorf("jamConnect: %v\n%v", jURL, err)}
+		}
+		return jamui.Connected{
+			WS:    ws,
+			JamID: jamID,
+		}
 	}
 }

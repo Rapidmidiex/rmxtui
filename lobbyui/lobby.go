@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/gorilla/websocket"
 	"golang.org/x/term"
 )
 
@@ -99,7 +98,6 @@ func (m Model) listJams() tea.Cmd {
 }
 
 type Model struct {
-	wsURL    string // Websocket endpoint
 	apiURL   string // REST API base endpoint
 	jams     []Jam
 	jamTable table.Model
@@ -108,9 +106,8 @@ type Model struct {
 	err      error
 }
 
-func New(wsURL, apiURL string) tea.Model {
+func New(apiURL string) tea.Model {
 	return Model{
-		wsURL:   wsURL,
 		apiURL:  apiURL,
 		help:    NewHelpModel(),
 		loading: true,
@@ -138,13 +135,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case jamCreated:
 		jamID := msg.ID
 		// Auto join the newly created Jam
-		cmds = append(cmds, jamConnect(m.wsURL, jamID))
+		cmds = append(cmds, jamSelect(jamID))
 	case tea.KeyMsg:
 		switch msg.String() {
 		case tea.KeyEnter.String():
 			jamID := m.jamTable.SelectedRow()[1]
 
-			cmds = append(cmds, jamConnect(m.wsURL, jamID))
+			cmds = append(cmds, jamSelect(jamID))
 		case "n":
 			// Create new Jam Session
 			cmds = append(cmds, jamCreate(m.apiURL))
@@ -251,25 +248,14 @@ func makeJamsTable(m Model) table.Model {
 	return t
 }
 
-type JamConnected struct {
-	WS    *websocket.Conn
-	JamID string
+type JamSelected struct {
+	ID string
 }
 
 // Commands
-func jamConnect(wsEndpoint, jamID string) tea.Cmd {
+func jamSelect(id string) tea.Cmd {
 	return func() tea.Msg {
-		url := wsEndpoint + "/jam/" + jamID
-		fmt.Println("ws url", url)
-		ws, _, err := websocket.DefaultDialer.Dial(url, nil)
-		if err != nil {
-			return errMsg{fmt.Errorf("jamConnect: %v\n%v", url, err)}
-		}
-		// TODO: Actually connect to Jam Session over websocket
-		return JamConnected{
-			WS:    ws,
-			JamID: jamID,
-		}
+		return JamSelected{id}
 	}
 }
 
