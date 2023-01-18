@@ -54,9 +54,9 @@ var (
 type errMsg struct{ err error }
 
 type Jam struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	// UserCount int    `json:"userCount"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	PlayerCount int    `json:"playerCount"`
 }
 
 type jamsResp struct {
@@ -64,8 +64,7 @@ type jamsResp struct {
 }
 
 type jamCreated struct {
-	ID        string `json:"id"`
-	UserCount int    `json:"userCount"`
+	ID string `json:"id"`
 }
 
 // For messages that contain errors it's often handy to also implement the
@@ -226,7 +225,7 @@ func makeJamsTable(m Model) table.Model {
 	rows := make([]table.Row, 0)
 
 	for _, j := range m.jams {
-		row := table.Row{j.Name, j.ID, "0"}
+		row := table.Row{j.Name, j.ID, fmt.Sprintf("%d", j.PlayerCount)}
 		rows = append(rows, row)
 	}
 
