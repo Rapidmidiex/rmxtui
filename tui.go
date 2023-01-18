@@ -104,21 +104,17 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m mainModel) View() string {
+	serverLine := fmt.Sprintf("\nServer: %s\n", m.RESTendpoint)
+
 	switch m.curView {
 	case jamView:
-		return m.jam.View()
+		return serverLine + m.jam.View()
 	default:
-		return m.lobby.View()
+		return serverLine + m.lobby.View()
 	}
 }
 
-func Run() {
-	// TODO: Get from args, user input, or env
-	serverHostURL := os.Getenv("RMX_SERVER_HOST")
-	if serverHostURL == "" {
-		serverHostURL = "https://rmx.fly.dev"
-	}
-
+func Run(serverHostURL string) {
 	m, err := NewModel(serverHostURL)
 	if err != nil {
 		bail(err)

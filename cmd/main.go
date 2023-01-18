@@ -1,7 +1,19 @@
 package main
 
-import "github.com/rapidmidiex/rmxtui"
+import (
+	"flag"
+
+	"github.com/rapidmidiex/rmxtui"
+)
+
+var serverVar string
+
+func init() {
+	flag.StringVar(&serverVar, "server", "https://rmx.fly.dev", "API Server Host")
+
+	flag.Parse()
+}
 
 func main() {
-	rmxtui.Run()
+	rmxtui.Run(serverVar)
 }
