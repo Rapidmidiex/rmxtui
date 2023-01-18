@@ -5,9 +5,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/gorilla/websocket"
+	"github.com/rapidmidiex/rmxtui/keymap"
 	"golang.org/x/term"
 )
 
@@ -30,17 +32,21 @@ var (
 		BottomRight: "╯",
 	}
 
-	key = lipgloss.NewStyle().
-		Align(lipgloss.Center).
-		Border(keyBorder, true).
-		BorderForeground(highlight).
-		Padding(0, 1)
+	pianoKeyStyle = lipgloss.NewStyle().
+			Align(lipgloss.Center).
+			Border(keyBorder, true).
+			BorderForeground(highlight).
+			Padding(0, 1)
 )
 
 // Command Types
 type Connected struct {
 	WS    *websocket.Conn
 	JamID string
+}
+
+type LeaveRoom struct {
+	Err error
 }
 
 type pianoKey struct {
@@ -78,20 +84,24 @@ func New() Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return tea.Batch(
+	// Commands go here
+	)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	var cmds []tea.Cmd
 	switch msg := msg.(type) {
 
-	// Is it a key press?
 	case tea.KeyMsg:
-		switch msg.String() {
-		// These keys should exit the program.
-		case "ctrl+c":
-			return m, tea.Quit
+		switch {
+		case key.Matches(msg, keymap.DefaultMapping.GoBack):
+			cmd = m.leaveRoom()
+			cmds = append(cmds, cmd)
 		default:
 			fmt.Printf("Key press: %s\n", msg.String())
+			return m, nil
 		}
 
 	// Entered the Jam Session
@@ -100,7 +110,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ID = msg.JamID
 	}
 
-	return m, nil
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) View() string {
@@ -113,15 +123,23 @@ func (m Model) View() string {
 
 	// Keyboard
 	keyboard := lipgloss.JoinHorizontal(lipgloss.Top,
-		key.Render("C5"+"\n\n"+"(q)"),
-		key.Render("D5"+"\n\n"+"(w)"),
-		key.Render("E5"+"\n\n"+"(e)"),
-		key.Render("F5"+"\n\n"+"(r)"),
-		key.Render("G5"+"\n\n"+"(t)"),
-		key.Render("A5"+"\n\n"+"(y)"),
-		key.Render("B5"+"\n\n"+"(u)"),
-		key.Render("C6"+"\n\n"+"(i)"),
+		pianoKeyStyle.Render("C5"+"\n\n"+"(q)"),
+		pianoKeyStyle.Render("D5"+"\n\n"+"(w)"),
+		pianoKeyStyle.Render("E5"+"\n\n"+"(e)"),
+		pianoKeyStyle.Render("F5"+"\n\n"+"(r)"),
+		pianoKeyStyle.Render("G5"+"\n\n"+"(t)"),
+		pianoKeyStyle.Render("A5"+"\n\n"+"(y)"),
+		pianoKeyStyle.Render("B5"+"\n\n"+"(u)"),
+		pianoKeyStyle.Render("C6"+"\n\n"+"(i)"),
 	)
 	doc.WriteString(keyboard + "\n\n")
 	return docStyle.Render(doc.String())
+}
+
+// LeaveRoom disconnects from the room and sends a LeaveRoom message.
+func (m Model) leaveRoom() tea.Cmd {
+	return func() tea.Msg {
+		err := m.Socket.Close()
+		return LeaveRoom{Err: err}
+	}
 }

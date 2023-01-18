@@ -5,11 +5,13 @@ import (
 	"net/url"
 	"os"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gorilla/websocket"
 	"github.com/hyphengolang/prelude/types/suid"
 
 	"github.com/rapidmidiex/rmxtui/jamui"
+	"github.com/rapidmidiex/rmxtui/keymap"
 	"github.com/rapidmidiex/rmxtui/lobbyui"
 )
 
@@ -72,18 +74,29 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	// Handle incoming messages from I/O
 	switch msg := msg.(type) {
+	case errMsg:
+		m.curError = msg.err.Error()
 
+		// Was a key press
 	case tea.KeyMsg:
+		switch {
 		// Ctrl+c exits. Even with short running programs it's good to have
 		// a quit key, just incase your logic is off. Users will be very
 		// annoyed if they can't exit.
-		if msg.Type == tea.KeyCtrlC {
+		case key.Matches(msg, keymap.DefaultMapping.Quit):
 			return m, tea.Quit
 		}
+
 	case lobbyui.JamSelected:
 		cmd = m.jamConnect(msg.ID)
 		m.curView = jamView
 		cmds = append(cmds, cmd)
+	case jamui.LeaveRoom:
+		if msg.Err != nil {
+			cmd = m.handleError(fmt.Errorf("leaveRoom: %w", msg.Err))
+			cmds = append(cmds, cmd)
+		}
+		m.curView = lobbyView
 	}
 
 	// Call sub-model Updates
@@ -141,5 +154,11 @@ func (m mainModel) jamConnect(jamID string) tea.Cmd {
 			WS:    ws,
 			JamID: jamID,
 		}
+	}
+}
+
+func (m mainModel) handleError(err error) tea.Cmd {
+	return func() tea.Msg {
+		return errMsg{err: err}
 	}
 }
