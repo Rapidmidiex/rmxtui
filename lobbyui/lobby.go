@@ -72,11 +72,11 @@ type jamCreated struct {
 func (e errMsg) Error() string { return e.err.Error() }
 
 // Commands
-func ListJams(baseURL string) tea.Cmd {
+func (m Model) listJams() tea.Cmd {
 	return func() tea.Msg {
 		// Create an HTTP client and make a GET request.
 		c := &http.Client{Timeout: 10 * time.Second}
-		res, err := c.Get(baseURL + "/jam")
+		res, err := c.Get(m.apiURL + "/jam")
 		if err != nil {
 			// There was an error making our request. Wrap the error we received
 			// in a message and return it.
@@ -117,9 +117,9 @@ func New(wsURL, apiURL string) tea.Model {
 	}
 }
 
-// Init needed to satisfy Model interface. It doesn't seem to be called on sub-models.
+// Init is used to handle any initial I/O
 func (m Model) Init() tea.Cmd {
-	return nil
+	return m.listJams()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

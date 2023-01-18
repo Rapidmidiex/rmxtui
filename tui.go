@@ -55,7 +55,10 @@ func NewModel(serverHostURL string) (mainModel, error) {
 }
 
 func (m mainModel) Init() tea.Cmd {
-	return lobbyui.ListJams(m.RESTendpoint)
+	return tea.Batch(
+		m.lobby.Init(),
+		m.jam.Init(),
+	)
 }
 
 func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
