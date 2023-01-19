@@ -2,17 +2,22 @@ package rmxtui
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/gorilla/websocket"
 	"github.com/hyphengolang/prelude/types/suid"
+	"golang.org/x/term"
 
 	"github.com/rapidmidiex/rmxtui/jamui"
 	"github.com/rapidmidiex/rmxtui/keymap"
 	"github.com/rapidmidiex/rmxtui/lobbyui"
+	"github.com/rapidmidiex/rmxtui/styles"
 )
 
 // ********
@@ -33,18 +38,25 @@ type (
 	errMsg struct{ err error }
 
 	mainModel struct {
+		loading      bool
+		curError     error
 		curView      appView
 		lobby        tea.Model
 		jam          tea.Model
 		RESTendpoint string
 		WSendpoint   string
 		// jamSocket    *websocket.Conn // Websocket connection to a Jam Session
+		log log.Logger
 	}
 )
 
 const (
 	jamView appView = iota
 	lobbyView
+)
+
+var (
+	docStyle = styles.DocStyle
 )
 
 func NewModel(serverHostURL string) (mainModel, error) {
@@ -59,6 +71,8 @@ func NewModel(serverHostURL string) (mainModel, error) {
 		lobby:        lobbyui.New(serverHostURL + "/api/v1"),
 		jam:          jamui.New(),
 		RESTendpoint: serverHostURL + "/api/v1",
+		WSendpoint:   wsHostURL.String() + "/ws",
+		log:          *log.Default(),
 	}, nil
 }
 
@@ -75,7 +89,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle incoming messages from I/O
 	switch msg := msg.(type) {
 	case errMsg:
-		m.curError = msg.err.Error()
+		m.curError = msg.err
+	case lobbyui.ErrMsg:
+		m.curError = msg.Err
 
 		// Was a key press
 	case tea.KeyMsg:
@@ -87,9 +103,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+	case jamui.Connected:
+		m.curView = jamView
 	case lobbyui.JamSelected:
 		cmd = m.jamConnect(msg.ID)
-		m.curView = jamView
 		cmds = append(cmds, cmd)
 	case jamui.LeaveRoom:
 		if msg.Err != nil {
@@ -114,14 +131,46 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m mainModel) View() string {
-	serverLine := fmt.Sprintf("\nServer: %s\n", m.RESTendpoint)
+	physicalWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
+	doc := strings.Builder{}
+	status := fmt.Sprintf("server: %s", m.RESTendpoint)
+
+	if m.loading {
+		status = "Fetching Jam Sessions..."
+	}
+
+	if m.curError != nil {
+		status = styles.RenderError(fmt.Sprint(m.curError))
+	}
 
 	switch m.curView {
 	case jamView:
-		return serverLine + m.jam.View()
-	default:
-		return serverLine + m.lobby.View()
+		doc.WriteString("\n" + m.jam.View())
+
+	case lobbyView:
+		doc.WriteString("\n" + m.lobby.View())
 	}
+
+	// Status bar
+	{
+		w := lipgloss.Width
+
+		statusKey := styles.StatusStyle.Render("STATUS")
+		statusVal := styles.StatusText.Copy().
+			Width(styles.Width - w(statusKey)).
+			Render(status)
+
+		bar := lipgloss.JoinHorizontal(lipgloss.Top,
+			statusKey,
+			statusVal,
+		)
+
+		if physicalWidth > 0 {
+			docStyle = styles.DocStyle.MaxWidth(physicalWidth)
+		}
+		doc.WriteString("\n" + styles.StatusBarStyle.Width(styles.Width).Render(bar))
+	}
+	return docStyle.Render(doc.String())
 }
 
 func Run(serverHostURL string) {
