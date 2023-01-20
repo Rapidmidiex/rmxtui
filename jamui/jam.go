@@ -1,6 +1,7 @@
 package jamui
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/rapidmidiex/rmxtui/chatui"
 	"github.com/rapidmidiex/rmxtui/keymap"
+	"github.com/rapidmidiex/rmxtui/wsmsg"
 	"golang.org/x/term"
 )
 
@@ -136,6 +138,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case Connected:
 		m.Socket = msg.WS
 		m.ID = msg.JamID
+	case chatui.Send:
+		err := m.Socket.WriteJSON(wsmsg.TextMsg{Typ: wsmsg.TEXT, Payload: msg.Msg})
+		// TODO bubble error up
+		fmt.Println(err)
 	}
 
 	switch m.focused {

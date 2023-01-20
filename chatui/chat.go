@@ -17,9 +17,13 @@ type (
 	errMsg error
 
 	ToggleFocus struct{}
+
+	Send struct {
+		Msg string
+	}
 )
 
-type Model struct {
+type model struct {
 	viewport    viewport.Model
 	messages    []string
 	textarea    textarea.Model
@@ -27,7 +31,7 @@ type Model struct {
 	err         error
 }
 
-func New() Model {
+func New() model {
 	ta := textarea.New()
 	ta.Placeholder = "Send a message..."
 	ta.Focus()
@@ -49,7 +53,7 @@ Type a message and press Enter to send.`)
 
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 
-	return Model{
+	return model{
 		textarea:    ta,
 		messages:    []string{},
 		viewport:    vp,
@@ -58,11 +62,13 @@ Type a message and press Enter to send.`)
 	}
 }
 
-func (m Model) Init() tea.Cmd {
+func (m model) Init() tea.Cmd {
 	return textarea.Blink
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cmds := make([]tea.Cmd, 0)
+
 	var (
 		tiCmd tea.Cmd
 		vpCmd tea.Cmd
@@ -70,6 +76,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	m.textarea, tiCmd = m.textarea.Update(msg)
 	m.viewport, vpCmd = m.viewport.Update(msg)
+
+	cmds = append(cmds, tiCmd, vpCmd)
 
 	switch msg := msg.(type) {
 	case ToggleFocus:
@@ -87,6 +95,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			m.messages = append(m.messages, m.senderStyle.Render("You: ")+m.textarea.Value())
 			m.viewport.SetContent(strings.Join(m.messages, "\n"))
+			cmds = append(cmds, m.send)
+
 			m.textarea.Reset()
 			m.viewport.GotoBottom()
 		}
@@ -97,13 +107,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	return m, tea.Batch(tiCmd, vpCmd)
+	return m, tea.Batch(cmds...)
 }
 
-func (m Model) View() string {
+func (m model) View() string {
 	return fmt.Sprintf(
 		"%s\n\n%s",
 		m.viewport.View(),
 		m.textarea.View(),
 	) + "\n\n"
+}
+
+func (m model) send() tea.Msg {
+	return Send{Msg: m.textarea.Value()}
 }
