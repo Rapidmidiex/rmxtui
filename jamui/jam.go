@@ -1,7 +1,6 @@
 package jamui
 
 import (
-	"fmt"
 	"os"
 	"strings"
 
@@ -9,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/gorilla/websocket"
+	"github.com/rapidmidiex/rmxtui/chatui"
 	"github.com/rapidmidiex/rmxtui/keymap"
 	"golang.org/x/term"
 )
@@ -39,35 +39,53 @@ var (
 			Padding(0, 1)
 )
 
-// Command Types
-type Connected struct {
-	WS    *websocket.Conn
-	JamID string
-}
+const (
+	chatFocus focused = iota
+	pianoFocus
+	// Don't forget to update model.availableFocusStates if more states are added here.
+)
 
-type LeaveRoom struct {
-	Err error
-}
+type (
+	// Command Types
+	Connected struct {
+		WS    *websocket.Conn
+		JamID string
+	}
 
-type pianoKey struct {
-	noteNumber int    // MIDI note number ie: 72
-	name       string // Name of musical note, ie: "C5"
-	keyMap     string // Mapped qwerty keyboard key. Ex: "q"
-}
+	LeaveRoom struct {
+		Err error
+	}
 
-type Model struct {
-	// Piano keys. {"q": pianoKey{72, "C5", "q", ...}}
-	piano []pianoKey
-	// Currently active piano keys
-	activeKeys map[string]struct{}
-	// Websocket connection for current Jam Session
-	Socket *websocket.Conn
-	// Jam Session ID
-	ID string
-}
+	// Virtual keyboard types
+	pianoKey struct {
+		noteNumber int    // MIDI note number ie: 72
+		name       string // Name of musical note, ie: "C5"
+		keyMap     string // Mapped qwerty keyboard key. Ex: "q"
+	}
 
-func New() Model {
-	return Model{
+	focused int
+
+	model struct {
+		// Piano keys. {"q": pianoKey{72, "C5", "q", ...}}
+		piano []pianoKey
+		// Currently active piano keys
+		activeKeys map[string]struct{}
+		// Websocket connection for current Jam Session
+		Socket *websocket.Conn
+		// Jam Session ID
+		ID string
+		// Chat container
+		chatBox tea.Model
+
+		// Element currently with focus
+		focused focused
+		// Number of available focus status
+		availableFocusStates int
+	}
+)
+
+func New() model {
+	return model{
 		piano: []pianoKey{
 			{72, "C5", "q"},
 			{74, "D5", "w"},
@@ -80,18 +98,25 @@ func New() Model {
 		},
 
 		activeKeys: make(map[string]struct{}),
+
+		chatBox: chatui.New(),
+
+		focused: chatFocus,
+		// If more focus states are added, update number of available states
+		availableFocusStates: 2,
 	}
 }
 
-func (m Model) Init() tea.Cmd {
+func (m model) Init() tea.Cmd {
 	return tea.Batch(
-	// Commands go here
+		m.chatBox.Init(),
 	)
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
 
 	case tea.KeyMsg:
@@ -99,9 +124,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keymap.DefaultMapping.GoBack):
 			cmd = m.leaveRoom()
 			cmds = append(cmds, cmd)
-		default:
-			fmt.Printf("Key press: %s\n", msg.String())
-			return m, nil
+
+		case key.Matches(msg, keymap.DefaultMapping.CycleFocus):
+			// Keep the state in bounds of the number of available states
+			m.focused = (m.focused + 1) % focused(m.availableFocusStates)
+			m.chatBox, cmd = m.chatBox.Update(chatui.ToggleFocus{})
+			cmds = append(cmds, cmd)
 		}
 
 	// Entered the Jam Session
@@ -110,10 +138,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ID = msg.JamID
 	}
 
+	switch m.focused {
+	case chatFocus:
+		m.chatBox, cmd = m.chatBox.Update(msg)
+		cmds = append(cmds, cmd)
+	case pianoFocus:
+		// TODO: play the piano
+		// - highlight the key play
+		// - run send note command
+	}
+
 	return m, tea.Batch(cmds...)
 }
 
-func (m Model) View() string {
+func (m model) View() string {
 	physicalWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
 	doc := strings.Builder{}
 
@@ -132,12 +170,13 @@ func (m Model) View() string {
 		pianoKeyStyle.Render("B5"+"\n\n"+"(u)"),
 		pianoKeyStyle.Render("C6"+"\n\n"+"(i)"),
 	)
+	doc.WriteString(m.chatBox.View())
 	doc.WriteString(keyboard + "\n\n")
 	return docStyle.Render(doc.String())
 }
 
 // LeaveRoom disconnects from the room and sends a LeaveRoom message.
-func (m Model) leaveRoom() tea.Cmd {
+func (m model) leaveRoom() tea.Cmd {
 	return func() tea.Msg {
 		err := m.Socket.Close()
 		return LeaveRoom{Err: err}

@@ -15,6 +15,8 @@ import (
 
 type (
 	errMsg error
+
+	ToggleFocus struct{}
 )
 
 type Model struct {
@@ -70,6 +72,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.viewport, vpCmd = m.viewport.Update(msg)
 
 	switch msg := msg.(type) {
+	case ToggleFocus:
+		if m.textarea.Focused() {
+			m.textarea.Blur()
+		} else {
+			m.textarea.Focus()
+		}
+
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
