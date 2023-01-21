@@ -212,7 +212,12 @@ func (m model) View() string {
 // LeaveRoom disconnects from the room and sends a LeaveRoom message.
 func (m model) leaveRoom() tea.Cmd {
 	return func() tea.Msg {
-		err := m.Socket.Close()
+		// Send websocket close message
+		err := m.Socket.WriteControl(
+			websocket.CloseMessage,
+			nil,
+			time.Now().Add(time.Second*10),
+		)
 		return LeaveRoom{Err: err}
 	}
 }
