@@ -234,6 +234,8 @@ func (m model) listenSocket() tea.Cmd {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				m.log.Printf("error: %v", err)
 			}
+			// TODO return errMsg
+			return nil
 		}
 
 		return chatui.RecvMsg{
