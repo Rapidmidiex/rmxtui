@@ -16,7 +16,7 @@ import (
 type (
 	errMsg error
 
-	ToggleFocus struct{}
+	ToggleFocusMsg struct{}
 
 	SendMsg struct {
 		Msg string
@@ -85,7 +85,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, tiCmd, vpCmd)
 
 	switch msg := msg.(type) {
-	case ToggleFocus:
+	case ToggleFocusMsg:
 		if m.textarea.Focused() {
 			m.textarea.Blur()
 		} else {
@@ -95,6 +95,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RecvMsg:
 		m.messages = append(m.messages, m.recipientStyle.Render("[sender]: ")+msg.Msg)
 		m.viewport.SetContent(strings.Join(m.messages, "\n"))
+		m.viewport.GotoBottom()
 
 	case tea.KeyMsg:
 		switch msg.Type {

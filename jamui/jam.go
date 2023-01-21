@@ -1,10 +1,10 @@
 package jamui
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -85,7 +85,14 @@ type (
 		// Number of available focus status
 		availableFocusStates int
 
-		conn chan wsmsg.TextMsg
+		// Info about the last websocket message sent.
+		lastMsg struct {
+			id string
+			// Time last websocket message was sent.
+			sentAt time.Time
+			// Difference between lastMsg.sentAt and when this message was received from server broadcast.
+			ping time.Duration
+		}
 
 		log *log.Logger
 	}
@@ -137,37 +144,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keymap.DefaultMapping.CycleFocus):
 			// Keep the state in bounds of the number of available states
 			m.focused = (m.focused + 1) % focused(m.availableFocusStates)
-			m.chatBox, cmd = m.chatBox.Update(chatui.ToggleFocus{})
+			m.chatBox, cmd = m.chatBox.Update(chatui.ToggleFocusMsg{})
 			cmds = append(cmds, cmd)
 		}
+
+		switch m.focused {
+		case chatFocus:
+			m.chatBox, cmd = m.chatBox.Update(msg)
+			cmds = append(cmds, cmd)
+		case pianoFocus:
+			// TODO: play the piano
+			// - highlight the key play
+			// - run send note command
+		}
+		// *** End KeyMsg ***
+		return m, tea.Batch(cmds...)
 
 	// Entered the Jam Session
 	case ConnectedMsg:
 		m.Socket = msg.WS
 		m.ID = msg.JamID
-		m.conn = make(chan wsmsg.TextMsg)
-		cmds = append(cmds, m.readPump(), socketListen(m.conn))
+		cmds = append(cmds, m.listenSocket())
 
 	case chatui.SendMsg:
+		m.lastMsg.sentAt = time.Now()
+		m.lastMsg.id = msg.Msg
+		m.lastMsg.ping = 1<<63 - 1 // Max duration (reset)
+
 		err := m.Socket.WriteJSON(wsmsg.TextMsg{Typ: wsmsg.TEXT, Payload: msg.Msg})
 		if err != nil {
 			// TODO bubble error up
-			fmt.Printf("ERROR: %v", err)
+			m.log.Printf("ERROR: %v", err)
 		}
-		cmds = append(cmds, socketListen(m.conn))
 	case chatui.RecvMsg:
 		m.chatBox, cmd = m.chatBox.Update(msg)
-		cmds = append(cmds, cmd, socketListen(m.conn))
-	}
-
-	switch m.focused {
-	case chatFocus:
-		m.chatBox, cmd = m.chatBox.Update(msg)
-		cmds = append(cmds, cmd)
-	case pianoFocus:
-		// TODO: play the piano
-		// - highlight the key play
-		// - run send note command
+		// Start listening again
+		cmds = append(cmds, cmd, m.listenSocket())
 	}
 
 	return m, tea.Batch(cmds...)
@@ -205,44 +217,23 @@ func (m model) leaveRoom() tea.Cmd {
 	}
 }
 
-func socketListen(c <-chan wsmsg.TextMsg) tea.Cmd {
-	// https://github.com/charmbracelet/bubbletea/issues/25
-	// TODO: I think this command is not called enough to read all messages
-	// from the channel. When the readPump writes to the channel, It does not send a Msg, so bubbletea doesnt know to read again.
-	// I'll have to think about how to continually read incoming messages.
-
-	// Repro:
-	// Send > 3 messages from another client.
-	// You see all messages are read from the socket in the readPump() loop, but only the first few messages are passed to bubbletea through this RecvMsg here.
-	// socketListen needs to be invoked more often (in a loop?)
+// ListenSocket reads messages from the websocket connection and returns a chatui.RecvMsg.
+func (m model) listenSocket() tea.Cmd {
+	// https://github.com/charmbracelet/bubbletea/issues/25#issuecomment-732339162
 	return func() tea.Msg {
-		txtMsg := <-c
-		return chatui.RecvMsg{
-			Msg: txtMsg.Payload,
-		}
-	}
-}
-
-func (m model) readPump() tea.Cmd {
-	return func() tea.Msg {
-		defer func() {
-			m.log.Print("CLOSE")
-			m.Socket.Close()
-		}()
-		for {
-			m.log.Print("LISTEN")
-			var message wsmsg.TextMsg
-			err := m.Socket.ReadJSON(&message)
-			m.log.Printf("MESSAGE: %s", message.Payload)
-			if err != nil {
-				m.log.Printf("ERROR: %s", err)
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Printf("error: %v", err)
-				}
-				break
+		var message wsmsg.TextMsg
+		err := m.Socket.ReadJSON(&message)
+		if err != nil {
+			m.log.Printf("ERROR: %s", err)
+			// TODO: Handle error
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				m.log.Printf("error: %v", err)
 			}
-			m.conn <- message
 		}
-		return nil
+
+		return chatui.RecvMsg{
+			Msg: message.Payload,
+		}
 	}
+
 }
