@@ -2,6 +2,7 @@ package jamui
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strings"
 
@@ -49,7 +50,7 @@ const (
 
 type (
 	// Command Types
-	Connected struct {
+	ConnectedMsg struct {
 		WS    *websocket.Conn
 		JamID string
 	}
@@ -83,6 +84,10 @@ type (
 		focused focused
 		// Number of available focus status
 		availableFocusStates int
+
+		conn chan wsmsg.TextMsg
+
+		log *log.Logger
 	}
 )
 
@@ -106,6 +111,8 @@ func New() model {
 		focused: chatFocus,
 		// If more focus states are added, update number of available states
 		availableFocusStates: 2,
+
+		log: log.Default(),
 	}
 }
 
@@ -135,13 +142,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	// Entered the Jam Session
-	case Connected:
+	case ConnectedMsg:
 		m.Socket = msg.WS
 		m.ID = msg.JamID
-	case chatui.Send:
+		m.conn = make(chan wsmsg.TextMsg)
+		cmds = append(cmds, m.readPump(), socketListen(m.conn))
+
+	case chatui.SendMsg:
 		err := m.Socket.WriteJSON(wsmsg.TextMsg{Typ: wsmsg.TEXT, Payload: msg.Msg})
-		// TODO bubble error up
-		fmt.Println(err)
+		if err != nil {
+			// TODO bubble error up
+			fmt.Printf("ERROR: %v", err)
+		}
+		cmds = append(cmds, socketListen(m.conn))
+	case chatui.RecvMsg:
+		m.chatBox, cmd = m.chatBox.Update(msg)
+		cmds = append(cmds, cmd, socketListen(m.conn))
 	}
 
 	switch m.focused {
@@ -186,5 +202,47 @@ func (m model) leaveRoom() tea.Cmd {
 	return func() tea.Msg {
 		err := m.Socket.Close()
 		return LeaveRoom{Err: err}
+	}
+}
+
+func socketListen(c <-chan wsmsg.TextMsg) tea.Cmd {
+	// https://github.com/charmbracelet/bubbletea/issues/25
+	// TODO: I think this command is not called enough to read all messages
+	// from the channel. When the readPump writes to the channel, It does not send a Msg, so bubbletea doesnt know to read again.
+	// I'll have to think about how to continually read incoming messages.
+
+	// Repro:
+	// Send > 3 messages from another client.
+	// You see all messages are read from the socket in the readPump() loop, but only the first few messages are passed to bubbletea through this RecvMsg here.
+	// socketListen needs to be invoked more often (in a loop?)
+	return func() tea.Msg {
+		txtMsg := <-c
+		return chatui.RecvMsg{
+			Msg: txtMsg.Payload,
+		}
+	}
+}
+
+func (m model) readPump() tea.Cmd {
+	return func() tea.Msg {
+		defer func() {
+			m.log.Print("CLOSE")
+			m.Socket.Close()
+		}()
+		for {
+			m.log.Print("LISTEN")
+			var message wsmsg.TextMsg
+			err := m.Socket.ReadJSON(&message)
+			m.log.Printf("MESSAGE: %s", message.Payload)
+			if err != nil {
+				m.log.Printf("ERROR: %s", err)
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					log.Printf("error: %v", err)
+				}
+				break
+			}
+			m.conn <- message
+		}
+		return nil
 	}
 }

@@ -18,17 +18,21 @@ type (
 
 	ToggleFocus struct{}
 
-	Send struct {
+	SendMsg struct {
+		Msg string
+	}
+	RecvMsg struct {
 		Msg string
 	}
 )
 
 type model struct {
-	viewport    viewport.Model
-	messages    []string
-	textarea    textarea.Model
-	senderStyle lipgloss.Style
-	err         error
+	viewport       viewport.Model
+	messages       []string
+	textarea       textarea.Model
+	senderStyle    lipgloss.Style
+	recipientStyle lipgloss.Style
+	err            error
 }
 
 func New() model {
@@ -54,11 +58,12 @@ Type a message and press Enter to send.`)
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 
 	return model{
-		textarea:    ta,
-		messages:    []string{},
-		viewport:    vp,
-		senderStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
-		err:         nil,
+		textarea:       ta,
+		messages:       []string{},
+		viewport:       vp,
+		senderStyle:    lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
+		recipientStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("3")),
+		err:            nil,
 	}
 }
 
@@ -86,6 +91,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.textarea.Focus()
 		}
+
+	case RecvMsg:
+		m.messages = append(m.messages, m.recipientStyle.Render("[sender]: ")+msg.Msg)
+		m.viewport.SetContent(strings.Join(m.messages, "\n"))
 
 	case tea.KeyMsg:
 		switch msg.Type {
@@ -119,5 +128,5 @@ func (m model) View() string {
 }
 
 func (m model) send() tea.Msg {
-	return Send{Msg: m.textarea.Value()}
+	return SendMsg{Msg: m.textarea.Value()}
 }

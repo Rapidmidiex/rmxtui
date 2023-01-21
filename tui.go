@@ -103,7 +103,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-	case jamui.Connected:
+	case jamui.ConnectedMsg:
 		m.curView = jamView
 	case lobbyui.JamSelected:
 		cmd = m.jamConnect(msg.ID)
@@ -199,7 +199,7 @@ func (m mainModel) jamConnect(jamID string) tea.Cmd {
 		if err != nil {
 			return errMsg{fmt.Errorf("jamConnect: %v\n%v", jURL, err)}
 		}
-		return jamui.Connected{
+		return jamui.ConnectedMsg{
 			WS:    ws,
 			JamID: jamID,
 		}
