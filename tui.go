@@ -64,7 +64,8 @@ func NewModel(serverHostURL string, debugMode bool) (mainModel, error) {
 	if err != nil {
 		return mainModel{}, err
 	}
-	wsHostURL.Scheme = "ws"
+
+	wsHostURL.Scheme = "ws" + strings.TrimPrefix(wsHostURL.Scheme, "http")
 
 	return mainModel{
 		curView:      lobbyView,
