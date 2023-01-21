@@ -93,7 +93,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case RecvMsg:
-		m.messages = append(m.messages, m.recipientStyle.Render("[sender]: ")+msg.Msg)
+		// TODO: partition self messages from other messages
+		m.messages = append(m.messages, m.recipientStyle.Render("[userID]: ")+msg.Msg)
 		m.viewport.SetContent(strings.Join(m.messages, "\n"))
 		m.viewport.GotoBottom()
 
@@ -103,7 +104,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			fmt.Println(m.textarea.Value())
 			return m, tea.Quit
 		case tea.KeyEnter:
-			m.messages = append(m.messages, m.senderStyle.Render("You: ")+m.textarea.Value())
 			m.viewport.SetContent(strings.Join(m.messages, "\n"))
 			cmds = append(cmds, m.send)
 
