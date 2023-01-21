@@ -59,7 +59,7 @@ var (
 	docStyle = styles.DocStyle
 )
 
-func NewModel(serverHostURL string) (mainModel, error) {
+func NewModel(serverHostURL string, debugMode bool) (mainModel, error) {
 	wsHostURL, err := url.Parse(serverHostURL)
 	if err != nil {
 		return mainModel{}, err
@@ -173,8 +173,8 @@ func (m mainModel) View() string {
 	return docStyle.Render(doc.String())
 }
 
-func Run(serverHostURL string) {
-	m, err := NewModel(serverHostURL)
+func Run(serverHostURL string, debugMode bool) {
+	m, err := NewModel(serverHostURL, debugMode)
 	if err != nil {
 		bail(err)
 	}
