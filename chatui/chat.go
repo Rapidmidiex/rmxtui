@@ -8,14 +8,13 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rapidmidiex/rmxtui/rmxerr"
 )
 
 // Reference:
 // https://github.com/charmbracelet/bubbletea/blob/master/examples/chat/main.go
 
 type (
-	errMsg error
-
 	ToggleFocusMsg struct{}
 
 	SendMsg struct {
@@ -112,7 +111,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	// We handle errors just like any other message
-	case errMsg:
+	case rmxerr.ErrMsg:
 		m.err = msg
 		return m, nil
 	}

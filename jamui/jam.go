@@ -1,6 +1,7 @@
 package jamui
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/rapidmidiex/rmxtui/chatui"
 	"github.com/rapidmidiex/rmxtui/keymap"
+	"github.com/rapidmidiex/rmxtui/rmxerr"
 	"github.com/rapidmidiex/rmxtui/wsmsg"
 	"golang.org/x/term"
 )
@@ -55,9 +57,9 @@ type (
 		JamID string
 	}
 
-	LeaveRoom struct {
-		Err error
-	}
+	LeaveRoomMsg struct{}
+
+	sentMsg struct{}
 
 	// Virtual keyboard types
 	pianoKey struct {
@@ -171,11 +173,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastMsg.id = msg.Msg
 		m.lastMsg.ping = 1<<63 - 1 // Max duration (reset)
 
-		err := m.Socket.WriteJSON(wsmsg.TextMsg{Typ: wsmsg.TEXT, Payload: msg.Msg})
-		if err != nil {
-			// TODO bubble error up
-			m.log.Printf("ERROR: %v", err)
-		}
+		cmds = append(cmds, m.sendTextMessage(msg.Msg))
 	case chatui.RecvMsg:
 		m.chatBox, cmd = m.chatBox.Update(msg)
 		// Start listening again
@@ -218,7 +216,10 @@ func (m model) leaveRoom() tea.Cmd {
 			nil,
 			time.Now().Add(time.Second*10),
 		)
-		return LeaveRoom{Err: err}
+		if err != nil {
+			return rmxerr.ErrMsg{Err: err}
+		}
+		return LeaveRoomMsg{}
 	}
 }
 
@@ -229,13 +230,10 @@ func (m model) listenSocket() tea.Cmd {
 		var message wsmsg.TextMsg
 		err := m.Socket.ReadJSON(&message)
 		if err != nil {
-			m.log.Printf("ERROR: %s", err)
-			// TODO: Handle error
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				m.log.Printf("error: %v", err)
+				return rmxerr.ErrMsg{Err: fmt.Errorf("readJSON: unexpected close: %w", err)}
 			}
-			// TODO return errMsg
-			return nil
+			return rmxerr.ErrMsg{Err: fmt.Errorf("readJSON: %w", err)}
 		}
 
 		return chatui.RecvMsg{
@@ -243,4 +241,14 @@ func (m model) listenSocket() tea.Cmd {
 		}
 	}
 
+}
+
+func (m model) sendTextMessage(text string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.Socket.WriteJSON(wsmsg.TextMsg{Typ: wsmsg.TEXT, Payload: text})
+		if err != nil {
+			return rmxerr.ErrMsg{Err: err}
+		}
+		return sentMsg{}
+	}
 }

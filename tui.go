@@ -17,6 +17,7 @@ import (
 	"github.com/rapidmidiex/rmxtui/jamui"
 	"github.com/rapidmidiex/rmxtui/keymap"
 	"github.com/rapidmidiex/rmxtui/lobbyui"
+	"github.com/rapidmidiex/rmxtui/rmxerr"
 	"github.com/rapidmidiex/rmxtui/styles"
 )
 
@@ -35,8 +36,6 @@ type (
 	appView int
 
 	// Message types
-	errMsg struct{ err error }
-
 	mainModel struct {
 		loading      bool
 		curError     error
@@ -87,11 +86,10 @@ func (m mainModel) Init() tea.Cmd {
 func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	var cmds []tea.Cmd
+
 	// Handle incoming messages from I/O
 	switch msg := msg.(type) {
-	case errMsg:
-		m.curError = msg.err
-	case lobbyui.ErrMsg:
+	case rmxerr.ErrMsg:
 		m.curError = msg.Err
 
 		// Was a key press
@@ -109,11 +107,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case lobbyui.JamSelected:
 		cmd = m.jamConnect(msg.ID)
 		cmds = append(cmds, cmd)
-	case jamui.LeaveRoom:
-		if msg.Err != nil {
-			cmd = m.handleError(fmt.Errorf("leaveRoom: %w", msg.Err))
-			cmds = append(cmds, cmd)
-		}
+	case jamui.LeaveRoomMsg:
 		m.curView = lobbyView
 	}
 
@@ -198,7 +192,7 @@ func (m mainModel) jamConnect(jamID string) tea.Cmd {
 		jURL := m.WSendpoint + "/jam/" + jamID
 		ws, _, err := websocket.DefaultDialer.Dial(jURL, nil)
 		if err != nil {
-			return errMsg{fmt.Errorf("jamConnect: %v\n%v", jURL, err)}
+			return rmxerr.ErrMsg{Err: fmt.Errorf("jamConnect: %v\n%v", jURL, err)}
 		}
 		return jamui.ConnectedMsg{
 			WS:    ws,
@@ -209,6 +203,6 @@ func (m mainModel) jamConnect(jamID string) tea.Cmd {
 
 func (m mainModel) handleError(err error) tea.Cmd {
 	return func() tea.Msg {
-		return errMsg{err: err}
+		return rmxerr.ErrMsg{Err: err}
 	}
 }

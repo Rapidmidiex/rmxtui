@@ -3,7 +3,6 @@ package lobbyui
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rapidmidiex/rmxtui/rmxerr"
 	"github.com/rapidmidiex/rmxtui/styles"
 	"golang.org/x/term"
 )
@@ -19,9 +19,6 @@ import (
 var (
 	docStyle = styles.DocStyle
 )
-
-// Message types
-type ErrMsg struct{ Err error }
 
 type Jam struct {
 	ID          string `json:"id"`
@@ -37,10 +34,6 @@ type jamCreated struct {
 	ID string `json:"id"`
 }
 
-// For messages that contain errors it's often handy to also implement the
-// error interface on the message.
-func (e ErrMsg) Error() string { return e.Err.Error() }
-
 // Commands
 func (m Model) listJams() tea.Cmd {
 	return func() tea.Msg {
@@ -50,19 +43,19 @@ func (m Model) listJams() tea.Cmd {
 		if err != nil {
 			// There was an error making our request. Wrap the error we received
 			// in a message and return it.
-			return ErrMsg{err}
+			return rmxerr.ErrMsg{Err: err}
 		}
 		// We received a response from the server.
 		// Return the HTTP status code
 		// as a message.
 		if res.StatusCode >= 400 {
-			return ErrMsg{fmt.Errorf("could not get sessions: %d", res.StatusCode)}
+			return rmxerr.ErrMsg{Err: fmt.Errorf("could not get sessions: %d", res.StatusCode)}
 		}
 		decoder := json.NewDecoder(res.Body)
 		var resp jamsResp
 		err = decoder.Decode(&resp)
 		if err != nil {
-			return ErrMsg{Err: fmt.Errorf("decode: %v", err)}
+			return rmxerr.ErrMsg{Err: fmt.Errorf("decode: %v", err)}
 		}
 		return resp
 	}
@@ -74,8 +67,7 @@ type Model struct {
 	jamTable table.Model
 	help     tea.Model
 	loading  bool
-	err      error
-	log      log.Logger
+	// log      log.Logger
 }
 
 func New(apiURL string) tea.Model {
@@ -83,7 +75,7 @@ func New(apiURL string) tea.Model {
 		apiURL:  apiURL,
 		help:    NewHelpModel(),
 		loading: true,
-		log:     *log.Default(),
+		// log:     *log.Default(),
 	}
 }
 
@@ -97,9 +89,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.jamTable.SetWidth(msg.Width - 10)
-	case ErrMsg:
-		// There was an error. Note it in the model.
-		m.err = msg
+
 	case jamsResp:
 		m.jams = msg.Rooms
 		m.jamTable = makeJamsTable(m)
@@ -214,13 +204,13 @@ func jamCreate(baseURL string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := http.Post(baseURL+"/jam", "application/json", strings.NewReader("{}"))
 		if err != nil {
-			return ErrMsg{Err: fmt.Errorf("jamCreate: %v", err)}
+			return rmxerr.ErrMsg{Err: fmt.Errorf("jamCreate: %v", err)}
 		}
 		var body jamCreated
 		decoder := json.NewDecoder(resp.Body)
 		err = decoder.Decode(&body)
 		if err != nil {
-			return ErrMsg{Err: fmt.Errorf("decode: %v", err)}
+			return rmxerr.ErrMsg{Err: fmt.Errorf("decode: %v", err)}
 		}
 		return body
 	}
