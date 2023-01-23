@@ -1,6 +1,7 @@
 package jamui
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -139,9 +140,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch {
+		case key.Matches(msg, keymap.DefaultMapping.Quit):
+			cmds = append(cmds, m.leaveRoom())
 		case key.Matches(msg, keymap.DefaultMapping.GoBack):
-			cmd = m.leaveRoom()
-			cmds = append(cmds, cmd)
+			cmds = append(cmds, m.leaveRoom())
 
 		case key.Matches(msg, keymap.DefaultMapping.CycleFocus):
 			// Keep the state in bounds of the number of available states
@@ -210,6 +212,9 @@ func (m model) View() string {
 // LeaveRoom disconnects from the room and sends a LeaveRoom message.
 func (m model) leaveRoom() tea.Cmd {
 	return func() tea.Msg {
+		if m.Socket == nil {
+			return LeaveRoomMsg{}
+		}
 		// Send websocket close message
 		err := m.Socket.WriteControl(
 			websocket.CloseMessage,
@@ -227,7 +232,7 @@ func (m model) leaveRoom() tea.Cmd {
 func (m model) listenSocket() tea.Cmd {
 	// https://github.com/charmbracelet/bubbletea/issues/25#issuecomment-732339162
 	return func() tea.Msg {
-		var message wsmsg.TextMsg
+		var message wsmsg.Envelope
 		err := m.Socket.ReadJSON(&message)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
@@ -235,19 +240,46 @@ func (m model) listenSocket() tea.Cmd {
 			}
 			return rmxerr.ErrMsg{Err: fmt.Errorf("readJSON: %w", err)}
 		}
+		m.log.Printf("%+v", message)
+		switch message.Typ {
+		case wsmsg.TEXT:
+			var textMsg wsmsg.TextMsg
+			err := json.Unmarshal(message.Payload, &textMsg)
+			if err != nil {
+				return rmxerr.ErrMsg{Err: fmt.Errorf("unmarshal TextMsg: %+v\n%w", message, err)}
+			}
+			return chatui.RecvMsg{
+				Msg: string(textMsg.Body),
+			}
+		case wsmsg.CONNECT:
+			var conMsg wsmsg.ConnectMsg
+			err := json.Unmarshal(message.Payload, &conMsg)
+			if err != nil {
+				return rmxerr.ErrMsg{Err: fmt.Errorf("unmarshal ConnectMsg: %+v\n%w", message, err)}
+			}
+			// TODO:
+			return chatui.RecvMsg{}
 
-		return chatui.RecvMsg{
-			Msg: message.Payload,
+		case wsmsg.MIDI:
+			// TODO:
+			return chatui.RecvMsg{}
+		default:
+			return rmxerr.ErrMsg{Err: fmt.Errorf("unknown message type: %+v", message)}
 		}
 	}
 
 }
 
-func (m model) sendTextMessage(text string) tea.Cmd {
+func (m model) sendTextMessage(body string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.Socket.WriteJSON(wsmsg.TextMsg{Typ: wsmsg.TEXT, Payload: text})
+		textMsg := wsmsg.TextMsg{Body: body}
+		payload, err := json.Marshal(textMsg)
 		if err != nil {
-			return rmxerr.ErrMsg{Err: err}
+			return rmxerr.ErrMsg{Err: fmt.Errorf("marshal: %w", err)}
+		}
+		err = m.Socket.WriteJSON(wsmsg.Envelope{Typ: wsmsg.TEXT, Payload: payload})
+		if err != nil {
+			return rmxerr.ErrMsg{Err: fmt.Errorf("writeJSON: %w", err)}
 		}
 		return sentMsg{}
 	}

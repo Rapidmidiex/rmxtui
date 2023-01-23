@@ -1,23 +1,43 @@
+// Package wsmmsg contains the RMX message types for communication between clients.
 package wsmsg
+
+import (
+	"encoding/json"
+
+	"github.com/google/uuid"
+)
 
 type (
 	MsgType   int
 	NoteState int
 
+	Envelope struct {
+		Typ    MsgType   `json:"type"`
+		UserID uuid.UUID `json:"userId"`
+		// TextMsg | MIDIMsg | ConnectMsg
+		Payload json.RawMessage `json:"payload"`
+	}
+
 	TextMsg struct {
-		Typ     MsgType `json:"type"`
-		Payload string  `json:"payload"`
+		Body string `json:"body"`
 	}
 
 	MIDIMsg struct {
 		State  NoteState `json:"state"`
 		Number int       `json:"number"`
+		UserID uuid.UUID `json:"userId"`
+	}
+
+	ConnectMsg struct {
+		UserID   uuid.UUID `json:"userId"`
+		UserName string    `json:"userName"`
 	}
 )
 
 const (
 	TEXT MsgType = iota
 	MIDI
+	CONNECT
 )
 
 const (
