@@ -1,7 +1,6 @@
 package jamui
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/rapidmidiex/rmxtui/chatui"
 	"github.com/rapidmidiex/rmxtui/keymap"
@@ -62,6 +62,15 @@ type (
 
 	sentMsg struct{}
 
+	recvConnectMsg struct {
+		userID   uuid.UUID
+		userName string
+	}
+
+	recvMIDIMsg struct {
+		msg wsmsg.MIDIMsg
+	}
+
 	// Virtual keyboard types
 	pianoKey struct {
 		noteNumber int    // MIDI note number ie: 72
@@ -96,6 +105,11 @@ type (
 			// Difference between lastMsg.sentAt and when this message was received from server broadcast.
 			ping time.Duration
 		}
+
+		userName string
+		userID   uuid.UUID
+
+		curMidiMsg wsmsg.MIDIMsg
 
 		log *log.Logger
 	}
@@ -175,9 +189,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastMsg.id = msg.Msg
 		m.lastMsg.ping = 1<<63 - 1 // Max duration (reset)
 
-		cmds = append(cmds, m.sendTextMessage(msg.Msg))
-	case chatui.RecvMsg:
+		cmds = append(cmds, m.sendTextMessage(msg.Msg, m.userName))
+	case chatui.RecvTextMsg:
 		m.chatBox, cmd = m.chatBox.Update(msg)
+		// Start listening again
+		cmds = append(cmds, cmd, m.listenSocket())
+
+	case recvConnectMsg:
+		m.userName = msg.userName
+		m.userID = msg.userID
+		// Start listening again
+		cmds = append(cmds, cmd, m.listenSocket())
+	case recvMIDIMsg:
+		m.curMidiMsg = msg.msg
 		// Start listening again
 		cmds = append(cmds, cmd, m.listenSocket())
 	}
@@ -240,29 +264,42 @@ func (m model) listenSocket() tea.Cmd {
 			}
 			return rmxerr.ErrMsg{Err: fmt.Errorf("readJSON: %w", err)}
 		}
-		m.log.Printf("%+v", message)
+
 		switch message.Typ {
 		case wsmsg.TEXT:
 			var textMsg wsmsg.TextMsg
-			err := json.Unmarshal(message.Payload, &textMsg)
-			if err != nil {
+			if err := message.Unwrap(&textMsg); err != nil {
 				return rmxerr.ErrMsg{Err: fmt.Errorf("unmarshal TextMsg: %+v\n%w", message, err)}
 			}
-			return chatui.RecvMsg{
-				Msg: string(textMsg.Body),
+			fromSelf := false
+			if message.UserID.String() == m.userID.String() {
+				fromSelf = true
 			}
+			return chatui.RecvTextMsg{
+				DisplayName: textMsg.DisplayName,
+				Msg:         string(textMsg.Body),
+				FromSelf:    fromSelf,
+			}
+
 		case wsmsg.CONNECT:
 			var conMsg wsmsg.ConnectMsg
-			err := json.Unmarshal(message.Payload, &conMsg)
-			if err != nil {
+			if err := message.Unwrap(&conMsg); err != nil {
 				return rmxerr.ErrMsg{Err: fmt.Errorf("unmarshal ConnectMsg: %+v\n%w", message, err)}
 			}
-			// TODO:
-			return chatui.RecvMsg{}
+			return recvConnectMsg{
+				userName: conMsg.UserName,
+				userID:   conMsg.UserID,
+			}
 
 		case wsmsg.MIDI:
-			// TODO:
-			return chatui.RecvMsg{}
+			var midiMsg wsmsg.MIDIMsg
+			if err := message.Unwrap(&midiMsg); err != nil {
+				return rmxerr.ErrMsg{Err: fmt.Errorf("unmarshal MIDIMsg: %+v\n%w", message, err)}
+			}
+			m.log.Println(midiMsg)
+			return recvMIDIMsg{
+				msg: midiMsg,
+			}
 		default:
 			return rmxerr.ErrMsg{Err: fmt.Errorf("unknown message type: %+v", message)}
 		}
@@ -270,14 +307,15 @@ func (m model) listenSocket() tea.Cmd {
 
 }
 
-func (m model) sendTextMessage(body string) tea.Cmd {
+func (m model) sendTextMessage(body, displayName string) tea.Cmd {
 	return func() tea.Msg {
-		textMsg := wsmsg.TextMsg{Body: body}
-		payload, err := json.Marshal(textMsg)
+		envelope := wsmsg.Envelope{Typ: wsmsg.TEXT, UserID: m.userID}
+		textMsg := wsmsg.TextMsg{Body: body, DisplayName: displayName}
+		err := envelope.SetPayload(textMsg)
 		if err != nil {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("marshal: %w", err)}
 		}
-		err = m.Socket.WriteJSON(wsmsg.Envelope{Typ: wsmsg.TEXT, Payload: payload})
+		err = m.Socket.WriteJSON(envelope)
 		if err != nil {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("writeJSON: %w", err)}
 		}

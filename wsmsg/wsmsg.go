@@ -12,20 +12,25 @@ type (
 	NoteState int
 
 	Envelope struct {
-		Typ    MsgType   `json:"type"`
-		UserID uuid.UUID `json:"userId"`
 		// TextMsg | MIDIMsg | ConnectMsg
+		Typ MsgType `json:"type"`
+		// RMX client identifier
+		UserID uuid.UUID `json:"userId"`
+		// Actual message data.
 		Payload json.RawMessage `json:"payload"`
 	}
 
 	TextMsg struct {
-		Body string `json:"body"`
+		DisplayName string `json:"displayName"`
+		Body        string `json:"body"`
 	}
 
 	MIDIMsg struct {
-		State  NoteState `json:"state"`
-		Number int       `json:"number"`
-		UserID uuid.UUID `json:"userId"`
+		State NoteState `json:"state"`
+		// MIDI Note # in "C3 Convention", C3 = 60. Available values: (0-127)
+		Number int `json:"number"`
+		// MIDI Velocity (0-127)
+		Velocity int `json:"velocity"`
 	}
 
 	ConnectMsg struct {
@@ -44,3 +49,16 @@ const (
 	NOTE_ON NoteState = iota
 	NOTE_OFF
 )
+
+func (e *Envelope) SetPayload(payload any) error {
+	p, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	e.Payload = p
+	return nil
+}
+
+func (e *Envelope) Unwrap(msg any) error {
+	return json.Unmarshal(e.Payload, msg)
+}
