@@ -2,15 +2,24 @@ package rmxtui
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"os"
+	"strings"
+	"time"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/gorilla/websocket"
 	"github.com/hyphengolang/prelude/types/suid"
+	"golang.org/x/term"
 
 	"github.com/rapidmidiex/rmxtui/jamui"
+	"github.com/rapidmidiex/rmxtui/keymap"
 	"github.com/rapidmidiex/rmxtui/lobbyui"
+	"github.com/rapidmidiex/rmxtui/rmxerr"
+	"github.com/rapidmidiex/rmxtui/styles"
 )
 
 // ********
@@ -28,15 +37,17 @@ type (
 	appView int
 
 	// Message types
-	errMsg struct{ err error }
-
 	mainModel struct {
+		loading      bool
+		curError     error
 		curView      appView
 		lobby        tea.Model
 		jam          tea.Model
 		RESTendpoint string
 		WSendpoint   string
+		ping         time.Duration
 		// jamSocket    *websocket.Conn // Websocket connection to a Jam Session
+		log log.Logger
 	}
 )
 
@@ -45,18 +56,25 @@ const (
 	lobbyView
 )
 
-func NewModel(serverHostURL string) (mainModel, error) {
+var (
+	docStyle = styles.DocStyle
+)
+
+func NewModel(serverHostURL string, debugMode bool) (mainModel, error) {
 	wsHostURL, err := url.Parse(serverHostURL)
 	if err != nil {
 		return mainModel{}, err
 	}
-	wsHostURL.Scheme = "ws"
+
+	wsHostURL.Scheme = "ws" + strings.TrimPrefix(wsHostURL.Scheme, "http")
 
 	return mainModel{
 		curView:      lobbyView,
 		lobby:        lobbyui.New(serverHostURL + "/api/v1"),
 		jam:          jamui.New(),
 		RESTendpoint: serverHostURL + "/api/v1",
+		WSendpoint:   wsHostURL.String() + "/ws",
+		log:          *log.Default(),
 	}, nil
 }
 
@@ -70,20 +88,32 @@ func (m mainModel) Init() tea.Cmd {
 func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	var cmds []tea.Cmd
+
 	// Handle incoming messages from I/O
 	switch msg := msg.(type) {
+	case rmxerr.ErrMsg:
+		m.curError = msg.Err
 
+	case jamui.PingCalcMsg:
+		m.ping = msg.Latest
+
+		// Was a key press
 	case tea.KeyMsg:
+		switch {
 		// Ctrl+c exits. Even with short running programs it's good to have
 		// a quit key, just incase your logic is off. Users will be very
 		// annoyed if they can't exit.
-		if msg.Type == tea.KeyCtrlC {
+		case key.Matches(msg, keymap.DefaultMapping.Quit):
 			return m, tea.Quit
 		}
+
+	case jamui.ConnectedMsg:
+		m.curView = jamView
 	case lobbyui.JamSelected:
 		cmd = m.jamConnect(msg.ID)
-		m.curView = jamView
 		cmds = append(cmds, cmd)
+	case jamui.LeaveRoomMsg:
+		m.curView = lobbyView
 	}
 
 	// Call sub-model Updates
@@ -101,18 +131,60 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m mainModel) View() string {
-	serverLine := fmt.Sprintf("\nServer: %s\n", m.RESTendpoint)
+	physicalWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
+	doc := strings.Builder{}
+
+	status := fmt.Sprintf("server: %s", formatHost(m.RESTendpoint))
+	statusKeyText := "STATUS"
+
+	pingTime := "--"
+	if m.ping > 0 {
+		pingTime = fmt.Sprintf("%dms", m.ping.Milliseconds())
+	}
+
+	if m.loading {
+		status = "Fetching Jam Sessions..."
+		statusKeyText = "LOADING"
+	}
+
+	if m.curError != nil {
+		status = styles.RenderError(fmt.Sprint(m.curError))
+		statusKeyText = "ERROR"
+	}
 
 	switch m.curView {
 	case jamView:
-		return serverLine + m.jam.View()
-	default:
-		return serverLine + m.lobby.View()
+		doc.WriteString("\n" + m.jam.View())
+
+	case lobbyView:
+		doc.WriteString("\n" + m.lobby.View())
 	}
+
+	// Status bar
+	{
+		w := lipgloss.Width
+
+		statusKey := styles.StatusStyle.Render(statusKeyText)
+		ping := styles.PingStyle.Render(pingTime)
+		statusVal := styles.StatusText.Copy().
+			Width(styles.Width - w(statusKey) - w(ping)).
+			Render(status)
+		bar := lipgloss.JoinHorizontal(lipgloss.Right,
+			statusKey,
+			statusVal,
+			ping,
+		)
+
+		if physicalWidth > 0 {
+			docStyle = styles.DocStyle.MaxWidth(physicalWidth)
+		}
+		doc.WriteString("\n" + styles.StatusBarStyle.Width(styles.Width).Render(bar))
+	}
+	return docStyle.Render(doc.String())
 }
 
-func Run(serverHostURL string) {
-	m, err := NewModel(serverHostURL)
+func Run(serverHostURL string, debugMode bool) {
+	m, err := NewModel(serverHostURL, debugMode)
 	if err != nil {
 		bail(err)
 	}
@@ -135,11 +207,19 @@ func (m mainModel) jamConnect(jamID string) tea.Cmd {
 		jURL := m.WSendpoint + "/jam/" + jamID
 		ws, _, err := websocket.DefaultDialer.Dial(jURL, nil)
 		if err != nil {
-			return errMsg{fmt.Errorf("jamConnect: %v\n%v", jURL, err)}
+			return rmxerr.ErrMsg{Err: fmt.Errorf("jamConnect: %v\n%v", jURL, err)}
 		}
-		return jamui.Connected{
+		return jamui.ConnectedMsg{
 			WS:    ws,
 			JamID: jamID,
 		}
 	}
+}
+
+func formatHost(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return parsed.Host
 }

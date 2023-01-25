@@ -21,3 +21,5 @@ bin/
 # Other
 .DS_Store
 *.env*
+debug.log
+cmd/cmd

@@ -11,46 +11,14 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rapidmidiex/rmxtui/rmxerr"
+	"github.com/rapidmidiex/rmxtui/styles"
 	"golang.org/x/term"
 )
 
-const (
-	// In real life situations we'd adjust the document to fit the width we've
-	// detected. In the case of this example we're hardcoding the width, and
-	// later using the detected width only to truncate in order to avoid jaggy
-	// wrapping.
-	width = 96
-)
-
-// Styles
 var (
-	baseStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("240"))
-
-		// Status Bar.
-	statusBarStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#343433", Dark: "#C1C6B2"}).
-			Background(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#353533"})
-
-	statusStyle = lipgloss.NewStyle().
-			Inherit(statusBarStyle).
-			Foreground(lipgloss.Color("#FFFDF5")).
-			Background(lipgloss.Color("#FF5F87")).
-			Padding(0, 1).
-			MarginRight(1)
-
-	statusText = lipgloss.NewStyle().Inherit(statusBarStyle)
-
-	messageText = lipgloss.NewStyle().Align(lipgloss.Left)
-
-	helpMenu = lipgloss.NewStyle().Align(lipgloss.Center).PaddingTop(2)
-	// Page
-	docStyle = lipgloss.NewStyle().Padding(1, 2, 1, 2)
+	docStyle = styles.DocStyle
 )
-
-// Message types
-type errMsg struct{ err error }
 
 type Jam struct {
 	ID          string `json:"id"`
@@ -66,10 +34,6 @@ type jamCreated struct {
 	ID string `json:"id"`
 }
 
-// For messages that contain errors it's often handy to also implement the
-// error interface on the message.
-func (e errMsg) Error() string { return e.err.Error() }
-
 // Commands
 func (m Model) listJams() tea.Cmd {
 	return func() tea.Msg {
@@ -79,19 +43,19 @@ func (m Model) listJams() tea.Cmd {
 		if err != nil {
 			// There was an error making our request. Wrap the error we received
 			// in a message and return it.
-			return errMsg{err}
+			return rmxerr.ErrMsg{Err: err}
 		}
 		// We received a response from the server.
 		// Return the HTTP status code
 		// as a message.
 		if res.StatusCode >= 400 {
-			return errMsg{fmt.Errorf("could not get sessions: %d", res.StatusCode)}
+			return rmxerr.ErrMsg{Err: fmt.Errorf("could not get sessions: %d", res.StatusCode)}
 		}
 		decoder := json.NewDecoder(res.Body)
 		var resp jamsResp
 		err = decoder.Decode(&resp)
 		if err != nil {
-			return errMsg{err: fmt.Errorf("decode: %v", err)}
+			return rmxerr.ErrMsg{Err: fmt.Errorf("decode: %v", err)}
 		}
 		return resp
 	}
@@ -103,7 +67,7 @@ type Model struct {
 	jamTable table.Model
 	help     tea.Model
 	loading  bool
-	err      error
+	// log      log.Logger
 }
 
 func New(apiURL string) tea.Model {
@@ -111,6 +75,7 @@ func New(apiURL string) tea.Model {
 		apiURL:  apiURL,
 		help:    NewHelpModel(),
 		loading: true,
+		// log:     *log.Default(),
 	}
 }
 
@@ -124,9 +89,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.jamTable.SetWidth(msg.Width - 10)
-	case errMsg:
-		// There was an error. Note it in the model.
-		m.err = msg
+
 	case jamsResp:
 		m.jams = msg.Rooms
 		m.jamTable = makeJamsTable(m)
@@ -160,50 +123,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	physicalWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
 	doc := strings.Builder{}
-	status := ""
-
-	if m.loading {
-		status = "Fetching Jam Sessions..."
-	}
-
-	if m.err != nil {
-		status = fmt.Sprintf("Error: %v!", m.err)
-	}
 
 	// Jam Session Table
 	{
 		if len(m.jams) > 0 {
-			jamTable := baseStyle.Width(width).Render(m.jamTable.View())
+			jamTable := styles.BaseStyle.Width(styles.Width).Render(m.jamTable.View())
 			doc.WriteString(jamTable)
 		} else if !m.loading {
-			doc.WriteString(messageText.Render("No Jams Yet. Create one?\n\n"))
+			doc.WriteString(styles.MessageText.Render("No Jams Yet. Create one?\n\n"))
 		}
-	}
-	// Status bar
-	{
-		w := lipgloss.Width
-
-		statusKey := statusStyle.Render("STATUS")
-		statusVal := statusText.Copy().
-			Width(width - w(statusKey)).
-			Render(status)
-
-		bar := lipgloss.JoinHorizontal(lipgloss.Top,
-			statusKey,
-			statusVal,
-		)
-
-		doc.WriteString("\n" + statusBarStyle.Width(width).Render(bar))
 	}
 
 	// Help menu
 	{
-
-		doc.WriteString("\n" + helpMenu.Render(m.help.View()))
+		doc.WriteString("\n" + styles.HelpMenu.Render(m.help.View()))
 	}
 
 	if physicalWidth > 0 {
-		docStyle = docStyle.MaxWidth(physicalWidth)
+		docStyle = styles.DocStyle.MaxWidth(physicalWidth)
 	}
 
 	// Okay, let's print it
@@ -267,13 +204,13 @@ func jamCreate(baseURL string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := http.Post(baseURL+"/jam", "application/json", strings.NewReader("{}"))
 		if err != nil {
-			return errMsg{err: fmt.Errorf("jamCreate: %v", err)}
+			return rmxerr.ErrMsg{Err: fmt.Errorf("jamCreate: %v", err)}
 		}
 		var body jamCreated
 		decoder := json.NewDecoder(resp.Body)
 		err = decoder.Decode(&body)
 		if err != nil {
-			return errMsg{err: fmt.Errorf("decode: %v", err)}
+			return rmxerr.ErrMsg{Err: fmt.Errorf("decode: %v", err)}
 		}
 		return body
 	}
