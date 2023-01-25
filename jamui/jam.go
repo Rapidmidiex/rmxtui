@@ -60,7 +60,10 @@ type (
 
 	LeaveRoomMsg struct{}
 
-	sentMsg struct{}
+	sentMsg struct {
+		id     uuid.UUID
+		sentAt time.Time
+	}
 
 	recvConnectMsg struct {
 		userID   uuid.UUID
@@ -69,6 +72,13 @@ type (
 
 	recvMIDIMsg struct {
 		msg wsmsg.MIDIMsg
+	}
+
+	PingCalcMsg struct {
+		Latest time.Duration
+		Avg    time.Duration
+		Min    time.Duration
+		Max    time.Duration
 	}
 
 	// Virtual keyboard types
@@ -97,15 +107,12 @@ type (
 		// Number of available focus status
 		availableFocusStates int
 
-		// Info about the last websocket message sent.
-		lastMsg struct {
-			id string
-			// Time last websocket message was sent.
-			sentAt time.Time
-			// Difference between lastMsg.sentAt and when this message was received from server broadcast.
-			ping time.Duration
-		}
+		// Map of times the latest messages were sent.
+		// { [messageID]: timeSentAt }
+		lastMsgs map[string]time.Time
 
+		// List of latest roundtrip times for messages.
+		pings    []time.Duration
 		userName string
 		userID   uuid.UUID
 
@@ -135,6 +142,9 @@ func New() model {
 		focused: chatFocus,
 		// If more focus states are added, update number of available states
 		availableFocusStates: 2,
+
+		lastMsgs: make(map[string]time.Time),
+		pings:    make([]time.Duration, 0),
 
 		log: log.Default(),
 	}
@@ -185,15 +195,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.listenSocket())
 
 	case chatui.SendMsg:
-		m.lastMsg.sentAt = time.Now()
-		m.lastMsg.id = msg.Msg
-		m.lastMsg.ping = 1<<63 - 1 // Max duration (reset)
-
 		cmds = append(cmds, m.sendTextMessage(msg.Msg, m.userName))
+	case sentMsg:
+		m.lastMsgs[msg.id.String()] = msg.sentAt
+
 	case chatui.RecvTextMsg:
 		m.chatBox, cmd = m.chatBox.Update(msg)
+
+		ping := m.calcPing(msg.ID.String())
+		if ping > 0 {
+			m.pings = append(m.pings, ping)
+		}
 		// Start listening again
-		cmds = append(cmds, cmd, m.listenSocket())
+		cmds = append(cmds, cmd, m.listenSocket(), updatePing(ping))
 
 	case recvConnectMsg:
 		m.userName = msg.userName
@@ -276,6 +290,7 @@ func (m model) listenSocket() tea.Cmd {
 				fromSelf = true
 			}
 			return chatui.RecvTextMsg{
+				ID:          message.ID,
 				DisplayName: textMsg.DisplayName,
 				Msg:         string(textMsg.Body),
 				FromSelf:    fromSelf,
@@ -309,7 +324,11 @@ func (m model) listenSocket() tea.Cmd {
 
 func (m model) sendTextMessage(body, displayName string) tea.Cmd {
 	return func() tea.Msg {
-		envelope := wsmsg.Envelope{Typ: wsmsg.TEXT, UserID: m.userID}
+		envelope := wsmsg.Envelope{
+			ID:     uuid.New(),
+			Typ:    wsmsg.TEXT,
+			UserID: m.userID,
+		}
 		textMsg := wsmsg.TextMsg{Body: body, DisplayName: displayName}
 		err := envelope.SetPayload(textMsg)
 		if err != nil {
@@ -319,6 +338,31 @@ func (m model) sendTextMessage(body, displayName string) tea.Cmd {
 		if err != nil {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("writeJSON: %w", err)}
 		}
-		return sentMsg{}
+		return sentMsg{
+			id:     envelope.ID,
+			sentAt: time.Now(),
+		}
+	}
+}
+
+// CalcPing looks up the message in the message history and calculates the roundtrip time.
+// If the message is not found, -1 is returned.
+func (m model) calcPing(msgID string) time.Duration {
+	sentAt, ok := m.lastMsgs[msgID]
+	if !ok {
+		return -1
+	}
+	return time.Since(sentAt)
+}
+
+func updatePing(ping time.Duration) tea.Cmd {
+	return func() tea.Msg {
+		return PingCalcMsg{
+			Latest: ping,
+			// TODO:
+			Avg: 0,
+			Max: 0,
+			Min: 0,
+		}
 	}
 }

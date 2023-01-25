@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/google/uuid"
 	"github.com/rapidmidiex/rmxtui/rmxerr"
 )
 
@@ -21,6 +22,7 @@ type (
 		Msg string
 	}
 	RecvTextMsg struct {
+		ID          uuid.UUID
 		DisplayName string
 		Msg         string
 		FromSelf    bool
