@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -44,6 +45,7 @@ type (
 		jam          tea.Model
 		RESTendpoint string
 		WSendpoint   string
+		ping         time.Duration
 		// jamSocket    *websocket.Conn // Websocket connection to a Jam Session
 		log log.Logger
 	}
@@ -92,6 +94,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case rmxerr.ErrMsg:
 		m.curError = msg.Err
 
+	case jamui.PingCalcMsg:
+		m.ping = msg.Latest
+
 		// Was a key press
 	case tea.KeyMsg:
 		switch {
@@ -128,14 +133,23 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m mainModel) View() string {
 	physicalWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
 	doc := strings.Builder{}
-	status := fmt.Sprintf("server: %s", m.RESTendpoint)
+
+	status := fmt.Sprintf("server: %s", formatHost(m.RESTendpoint))
+	statusKeyText := "STATUS"
+
+	pingTime := "--"
+	if m.ping > 0 {
+		pingTime = fmt.Sprintf("%dms", m.ping.Milliseconds())
+	}
 
 	if m.loading {
 		status = "Fetching Jam Sessions..."
+		statusKeyText = "LOADING"
 	}
 
 	if m.curError != nil {
 		status = styles.RenderError(fmt.Sprint(m.curError))
+		statusKeyText = "ERROR"
 	}
 
 	switch m.curView {
@@ -150,14 +164,15 @@ func (m mainModel) View() string {
 	{
 		w := lipgloss.Width
 
-		statusKey := styles.StatusStyle.Render("STATUS")
+		statusKey := styles.StatusStyle.Render(statusKeyText)
+		ping := styles.PingStyle.Render(pingTime)
 		statusVal := styles.StatusText.Copy().
-			Width(styles.Width - w(statusKey)).
+			Width(styles.Width - w(statusKey) - w(ping)).
 			Render(status)
-
-		bar := lipgloss.JoinHorizontal(lipgloss.Top,
+		bar := lipgloss.JoinHorizontal(lipgloss.Right,
 			statusKey,
 			statusVal,
+			ping,
 		)
 
 		if physicalWidth > 0 {
@@ -201,8 +216,10 @@ func (m mainModel) jamConnect(jamID string) tea.Cmd {
 	}
 }
 
-func (m mainModel) handleError(err error) tea.Cmd {
-	return func() tea.Msg {
-		return rmxerr.ErrMsg{Err: err}
+func formatHost(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		log.Fatal(err)
 	}
+	return parsed.Host
 }

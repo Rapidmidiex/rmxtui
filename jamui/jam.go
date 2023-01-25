@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/rapidmidiex/rmxtui/chatui"
 	"github.com/rapidmidiex/rmxtui/keymap"
@@ -59,7 +60,26 @@ type (
 
 	LeaveRoomMsg struct{}
 
-	sentMsg struct{}
+	sentMsg struct {
+		id     uuid.UUID
+		sentAt time.Time
+	}
+
+	recvConnectMsg struct {
+		userID   uuid.UUID
+		userName string
+	}
+
+	recvMIDIMsg struct {
+		msg wsmsg.MIDIMsg
+	}
+
+	PingCalcMsg struct {
+		Latest time.Duration
+		Avg    time.Duration
+		Min    time.Duration
+		Max    time.Duration
+	}
 
 	// Virtual keyboard types
 	pianoKey struct {
@@ -87,14 +107,16 @@ type (
 		// Number of available focus status
 		availableFocusStates int
 
-		// Info about the last websocket message sent.
-		lastMsg struct {
-			id string
-			// Time last websocket message was sent.
-			sentAt time.Time
-			// Difference between lastMsg.sentAt and when this message was received from server broadcast.
-			ping time.Duration
-		}
+		// Map of times the latest messages were sent.
+		// { [messageID]: timeSentAt }
+		lastMsgs map[string]time.Time
+
+		// List of latest roundtrip times for messages.
+		pings    []time.Duration
+		userName string
+		userID   uuid.UUID
+
+		curMidiMsg wsmsg.MIDIMsg
 
 		log *log.Logger
 	}
@@ -121,6 +143,9 @@ func New() model {
 		// If more focus states are added, update number of available states
 		availableFocusStates: 2,
 
+		lastMsgs: make(map[string]time.Time),
+		pings:    make([]time.Duration, 0),
+
 		log: log.Default(),
 	}
 }
@@ -139,9 +164,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch {
+		case key.Matches(msg, keymap.DefaultMapping.Quit):
+			cmds = append(cmds, m.leaveRoom())
 		case key.Matches(msg, keymap.DefaultMapping.GoBack):
-			cmd = m.leaveRoom()
-			cmds = append(cmds, cmd)
+			cmds = append(cmds, m.leaveRoom())
 
 		case key.Matches(msg, keymap.DefaultMapping.CycleFocus):
 			// Keep the state in bounds of the number of available states
@@ -169,13 +195,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.listenSocket())
 
 	case chatui.SendMsg:
-		m.lastMsg.sentAt = time.Now()
-		m.lastMsg.id = msg.Msg
-		m.lastMsg.ping = 1<<63 - 1 // Max duration (reset)
+		cmds = append(cmds, m.sendTextMessage(msg.Msg, m.userName))
+	case sentMsg:
+		m.lastMsgs[msg.id.String()] = msg.sentAt
 
-		cmds = append(cmds, m.sendTextMessage(msg.Msg))
-	case chatui.RecvMsg:
+	case chatui.RecvTextMsg:
 		m.chatBox, cmd = m.chatBox.Update(msg)
+
+		ping := m.calcPing(msg.ID.String())
+		if ping > 0 {
+			m.pings = append(m.pings, ping)
+		}
+		// Start listening again
+		cmds = append(cmds, cmd, m.listenSocket(), updatePing(ping))
+
+	case recvConnectMsg:
+		m.userName = msg.userName
+		m.userID = msg.userID
+		// Start listening again
+		cmds = append(cmds, cmd, m.listenSocket())
+	case recvMIDIMsg:
+		m.curMidiMsg = msg.msg
 		// Start listening again
 		cmds = append(cmds, cmd, m.listenSocket())
 	}
@@ -210,6 +250,9 @@ func (m model) View() string {
 // LeaveRoom disconnects from the room and sends a LeaveRoom message.
 func (m model) leaveRoom() tea.Cmd {
 	return func() tea.Msg {
+		if m.Socket == nil {
+			return LeaveRoomMsg{}
+		}
 		// Send websocket close message
 		err := m.Socket.WriteControl(
 			websocket.CloseMessage,
@@ -227,7 +270,7 @@ func (m model) leaveRoom() tea.Cmd {
 func (m model) listenSocket() tea.Cmd {
 	// https://github.com/charmbracelet/bubbletea/issues/25#issuecomment-732339162
 	return func() tea.Msg {
-		var message wsmsg.TextMsg
+		var message wsmsg.Envelope
 		err := m.Socket.ReadJSON(&message)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
@@ -236,19 +279,92 @@ func (m model) listenSocket() tea.Cmd {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("readJSON: %w", err)}
 		}
 
-		return chatui.RecvMsg{
-			Msg: message.Payload,
+		switch message.Typ {
+		case wsmsg.TEXT:
+			var textMsg wsmsg.TextMsg
+			if err := message.Unwrap(&textMsg); err != nil {
+				return rmxerr.ErrMsg{Err: fmt.Errorf("unmarshal TextMsg: %+v\n%w", message, err)}
+			}
+			fromSelf := false
+			if message.UserID.String() == m.userID.String() {
+				fromSelf = true
+			}
+			return chatui.RecvTextMsg{
+				ID:          message.ID,
+				DisplayName: textMsg.DisplayName,
+				Msg:         string(textMsg.Body),
+				FromSelf:    fromSelf,
+			}
+
+		case wsmsg.CONNECT:
+			var conMsg wsmsg.ConnectMsg
+			if err := message.Unwrap(&conMsg); err != nil {
+				return rmxerr.ErrMsg{Err: fmt.Errorf("unmarshal ConnectMsg: %+v\n%w", message, err)}
+			}
+			return recvConnectMsg{
+				userName: conMsg.UserName,
+				userID:   conMsg.UserID,
+			}
+
+		case wsmsg.MIDI:
+			var midiMsg wsmsg.MIDIMsg
+			if err := message.Unwrap(&midiMsg); err != nil {
+				return rmxerr.ErrMsg{Err: fmt.Errorf("unmarshal MIDIMsg: %+v\n%w", message, err)}
+			}
+			m.log.Println(midiMsg)
+			return recvMIDIMsg{
+				msg: midiMsg,
+			}
+		default:
+			return rmxerr.ErrMsg{Err: fmt.Errorf("unknown message type: %+v", message)}
 		}
 	}
 
 }
 
-func (m model) sendTextMessage(text string) tea.Cmd {
+func (m model) sendTextMessage(body, displayName string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.Socket.WriteJSON(wsmsg.TextMsg{Typ: wsmsg.TEXT, Payload: text})
-		if err != nil {
-			return rmxerr.ErrMsg{Err: err}
+		envelope := wsmsg.Envelope{
+			ID:     uuid.New(),
+			Typ:    wsmsg.TEXT,
+			UserID: m.userID,
 		}
-		return sentMsg{}
+		textMsg := wsmsg.TextMsg{Body: body, DisplayName: displayName}
+		err := envelope.SetPayload(textMsg)
+		if err != nil {
+			return rmxerr.ErrMsg{Err: fmt.Errorf("marshal: %w", err)}
+		}
+		err = m.Socket.WriteJSON(envelope)
+		if err != nil {
+			return rmxerr.ErrMsg{Err: fmt.Errorf("writeJSON: %w", err)}
+		}
+		return sentMsg{
+			id:     envelope.ID,
+			sentAt: time.Now(),
+		}
+	}
+}
+
+// CalcPing looks up the message in the message history and calculates the roundtrip time.
+// If the message is not found, -1 is returned.
+func (m model) calcPing(msgID string) time.Duration {
+	sentAt, ok := m.lastMsgs[msgID]
+	if !ok {
+		return -1
+	}
+
+	delete(m.lastMsgs, msgID)
+	return time.Since(sentAt)
+}
+
+func updatePing(ping time.Duration) tea.Cmd {
+	return func() tea.Msg {
+		return PingCalcMsg{
+			Latest: ping,
+			// TODO:
+			Avg: 0,
+			Max: 0,
+			Min: 0,
+		}
 	}
 }

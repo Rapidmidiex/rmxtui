@@ -7,7 +7,7 @@ const (
 	// detected. In the case of this example we're hardcoding the width, and
 	// later using the detected width only to truncate in order to avoid jaggy
 	// wrapping.
-	Width = 96
+	Width = 72
 )
 
 // https://github.com/inngest/inngest/blob/main/pkg/cli/styles.go
@@ -27,7 +27,14 @@ var (
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderForeground(lipgloss.Color("240"))
 
-		// Status Bar.
+	// Status Bar.
+	StatusNugget = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFDF5")).
+			Padding(0, 1)
+	PingStyle = StatusNugget.Copy().
+			Background(lipgloss.Color("#E303FC")).
+			Align(lipgloss.Right)
+
 	StatusBarStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "#343433", Dark: "#C1C6B2"}).
 			Background(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#353533"})

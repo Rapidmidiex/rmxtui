@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/google/uuid"
 	"github.com/rapidmidiex/rmxtui/rmxerr"
 )
 
@@ -20,8 +21,11 @@ type (
 	SendMsg struct {
 		Msg string
 	}
-	RecvMsg struct {
-		Msg string
+	RecvTextMsg struct {
+		ID          uuid.UUID
+		DisplayName string
+		Msg         string
+		FromSelf    bool
 	}
 )
 
@@ -91,9 +95,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.textarea.Focus()
 		}
 
-	case RecvMsg:
-		// TODO: partition self messages from other messages
-		m.messages = append(m.messages, m.recipientStyle.Render("[userID]: ")+msg.Msg)
+	case RecvTextMsg:
+		if msg.FromSelf {
+			textMsg := fmt.Sprintf("You: %s", msg.Msg)
+			m.messages = append(m.messages, m.senderStyle.Render(textMsg))
+		} else {
+			// Message from others
+			textMsg := fmt.Sprintf("%s: %s", msg.DisplayName, msg.Msg)
+			m.messages = append(m.messages, m.recipientStyle.Render(textMsg))
+		}
 		m.viewport.SetContent(strings.Join(m.messages, "\n"))
 		m.viewport.GotoBottom()
 
