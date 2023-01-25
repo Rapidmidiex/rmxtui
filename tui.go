@@ -95,7 +95,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.curError = msg.Err
 
 	case jamui.PingCalcMsg:
-		m.ping = msg.Time
+		m.ping = msg.Latest
 
 		// Was a key press
 	case tea.KeyMsg:

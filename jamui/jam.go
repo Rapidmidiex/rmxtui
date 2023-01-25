@@ -352,6 +352,8 @@ func (m model) calcPing(msgID string) time.Duration {
 	if !ok {
 		return -1
 	}
+
+	delete(m.lastMsgs, msgID)
 	return time.Since(sentAt)
 }
 
