@@ -1,10 +1,10 @@
-package ping_test
+package rtt_test
 
 import (
 	"testing"
 	"time"
 
-	"github.com/rapidmidiex/rmxtui/ping"
+	"github.com/rapidmidiex/rmxtui/rtt"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,8 +19,8 @@ func TestCalc(t *testing.T) {
 		time.Millisecond * 234,
 	}
 
-	gotCmd := ping.CalcStats(time.Millisecond*30, prevPings)
-	want := ping.CalcMsg{
+	gotCmd := rtt.CalcStats(time.Millisecond*30, prevPings)
+	want := rtt.CalcMsg{
 		Min:    time.Millisecond * 19,
 		Max:    time.Millisecond * 1000,
 		Avg:    time.Millisecond * 214, // 214.42857142857 rounded to nearest ms

@@ -14,8 +14,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/rapidmidiex/rmxtui/chatui"
 	"github.com/rapidmidiex/rmxtui/keymap"
-	"github.com/rapidmidiex/rmxtui/ping"
 	"github.com/rapidmidiex/rmxtui/rmxerr"
+	"github.com/rapidmidiex/rmxtui/rtt"
 	"github.com/rapidmidiex/rmxtui/wsmsg"
 	"golang.org/x/term"
 )
@@ -201,7 +201,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pings = append(m.pings, latest)
 		}
 		// Start listening again
-		cmds = append(cmds, cmd, m.listenSocket(), ping.CalcStats(latest, m.pings))
+		cmds = append(cmds, cmd, m.listenSocket(), rtt.CalcStats(latest, m.pings))
 
 	case recvConnectMsg:
 		m.userName = msg.userName

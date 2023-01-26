@@ -17,8 +17,8 @@ import (
 	"github.com/rapidmidiex/rmxtui/jamui"
 	"github.com/rapidmidiex/rmxtui/keymap"
 	"github.com/rapidmidiex/rmxtui/lobbyui"
-	"github.com/rapidmidiex/rmxtui/ping"
 	"github.com/rapidmidiex/rmxtui/rmxerr"
+	"github.com/rapidmidiex/rmxtui/rtt"
 	"github.com/rapidmidiex/rmxtui/styles"
 )
 
@@ -45,7 +45,7 @@ type (
 		jam          tea.Model
 		RESTendpoint string
 		WSendpoint   string
-		pingStats    ping.CalcMsg
+		rttStats     rtt.CalcMsg
 		// jamSocket    *websocket.Conn // Websocket connection to a Jam Session
 		log log.Logger
 	}
@@ -94,8 +94,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case rmxerr.ErrMsg:
 		m.curError = msg.Err
 
-	case ping.CalcMsg:
-		m.pingStats = msg
+	case rtt.CalcMsg:
+		m.rttStats = msg
 
 		// Was a key press
 	case tea.KeyMsg:
@@ -137,13 +137,14 @@ func (m mainModel) View() string {
 	status := fmt.Sprintf("server: %s", formatHost(m.RESTendpoint))
 	statusKeyText := "STATUS"
 
-	pingStats := "--"
-	if m.pingStats.Min > 0 {
-		pingStats = lipgloss.JoinHorizontal(lipgloss.Right,
-			"PING ",
-			fmt.Sprintf("max: %d ", m.pingStats.Max.Milliseconds()),
-			fmt.Sprintf("min: %d ", m.pingStats.Min.Milliseconds()),
-			fmt.Sprintf("avg: %d", m.pingStats.Avg.Milliseconds()),
+	rttStats := "--"
+	if m.rttStats.Min > 0 {
+		rttStats = lipgloss.JoinHorizontal(lipgloss.Right,
+			"RTT ",
+			fmt.Sprintf("cur: %d ", m.rttStats.Latest.Milliseconds()),
+			fmt.Sprintf("max: %d ", m.rttStats.Max.Milliseconds()),
+			fmt.Sprintf("min: %d ", m.rttStats.Min.Milliseconds()),
+			fmt.Sprintf("avg: %d", m.rttStats.Avg.Milliseconds()),
 		)
 	}
 
@@ -170,7 +171,7 @@ func (m mainModel) View() string {
 		w := lipgloss.Width
 
 		statusKey := styles.StatusStyle.Render(statusKeyText)
-		ping := styles.PingStyle.Render(pingStats)
+		ping := styles.PingStyle.Render(rttStats)
 		statusVal := styles.StatusText.Copy().
 			Width(styles.Width - w(statusKey) - w(ping)).
 			Render(status)

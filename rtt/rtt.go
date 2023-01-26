@@ -1,4 +1,5 @@
-package ping
+// Package rtt contains tools for calculating stats on message roundtrip times.
+package rtt
 
 import (
 	"math"
