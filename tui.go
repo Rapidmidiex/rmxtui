@@ -140,11 +140,11 @@ func (m mainModel) View() string {
 	rttStats := "--"
 	if m.rttStats.Min > 0 {
 		rttStats = lipgloss.JoinHorizontal(lipgloss.Right,
-			"RTT ",
-			fmt.Sprintf("cur: %d ", m.rttStats.Latest.Milliseconds()),
-			fmt.Sprintf("max: %d ", m.rttStats.Max.Milliseconds()),
-			fmt.Sprintf("min: %d ", m.rttStats.Min.Milliseconds()),
-			fmt.Sprintf("avg: %d", m.rttStats.Avg.Milliseconds()),
+			"Ping (ms)·",
+			fmt.Sprintf("cur %d·", m.rttStats.Latest.Milliseconds()),
+			fmt.Sprintf("max %d·", m.rttStats.Max.Milliseconds()),
+			fmt.Sprintf("min %d·", m.rttStats.Min.Milliseconds()),
+			fmt.Sprintf("avg %d", m.rttStats.Avg.Milliseconds()),
 		)
 	}
 

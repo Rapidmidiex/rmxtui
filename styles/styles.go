@@ -32,7 +32,7 @@ var (
 			Foreground(lipgloss.Color("#FFFDF5")).
 			Padding(0, 1)
 	PingStyle = StatusNugget.Copy().
-			Background(lipgloss.Color("#E303FC")).
+			Background(lipgloss.Color("#e783f2")).
 			Align(lipgloss.Right)
 
 	StatusBarStyle = lipgloss.NewStyle().
