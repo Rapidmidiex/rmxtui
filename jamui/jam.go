@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/rapidmidiex/rmxtui/chatui"
 	"github.com/rapidmidiex/rmxtui/keymap"
+	"github.com/rapidmidiex/rmxtui/ping"
 	"github.com/rapidmidiex/rmxtui/rmxerr"
 	"github.com/rapidmidiex/rmxtui/wsmsg"
 	"golang.org/x/term"
@@ -72,13 +73,6 @@ type (
 
 	recvMIDIMsg struct {
 		msg wsmsg.MIDIMsg
-	}
-
-	PingCalcMsg struct {
-		Latest time.Duration
-		Avg    time.Duration
-		Min    time.Duration
-		Max    time.Duration
 	}
 
 	// Virtual keyboard types
@@ -202,12 +196,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatui.RecvTextMsg:
 		m.chatBox, cmd = m.chatBox.Update(msg)
 
-		ping := m.calcPing(msg.ID.String())
-		if ping > 0 {
-			m.pings = append(m.pings, ping)
+		latest := m.calcPing(msg.ID.String())
+		if latest > 0 {
+			m.pings = append(m.pings, latest)
 		}
 		// Start listening again
-		cmds = append(cmds, cmd, m.listenSocket(), updatePing(ping))
+		cmds = append(cmds, cmd, m.listenSocket(), ping.CalcStats(latest, m.pings))
 
 	case recvConnectMsg:
 		m.userName = msg.userName
@@ -355,16 +349,4 @@ func (m model) calcPing(msgID string) time.Duration {
 
 	delete(m.lastMsgs, msgID)
 	return time.Since(sentAt)
-}
-
-func updatePing(ping time.Duration) tea.Cmd {
-	return func() tea.Msg {
-		return PingCalcMsg{
-			Latest: ping,
-			// TODO:
-			Avg: 0,
-			Max: 0,
-			Min: 0,
-		}
-	}
 }
