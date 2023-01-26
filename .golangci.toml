@@ -1,0 +1,6 @@
+[[issues.exclude-rules]]
+# Ingore govet logger sync copy
+# The log is only used for debugging and the tea interface expects non-pointer model recievers.
+# copylocks: return copies lock value: github.com/rapidmidiex/rmxtui.mainModel contains log.Logger contains sync.Mutex
+linters = [ "govet" ]
+text = "log.Logger"
