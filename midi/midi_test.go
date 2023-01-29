@@ -25,9 +25,7 @@ func TestPlayer(t *testing.T) {
 		Velocity: 127,
 	}
 
-	// The output buffer (seconds).
-	length := int32(1 * 44000)
-	streamer := midi.NewMIDIStreamer(length)
+	streamer := midi.NewMIDIStreamer(time.Second)
 
 	player.Play(msg, streamer)
 
@@ -38,11 +36,42 @@ func TestPlayer(t *testing.T) {
 
 func TestMIDIStreamer(t *testing.T) {
 	sr := beep.SampleRate(44100)
-	speaker.Init(sr, sr.N(time.Second/5))
+	bufLen := sr.N(time.Second / 5)
+	speaker.Init(sr, bufLen)
+
+	streamer := midi.NewMIDIStreamer(time.Second)
 
 	done := make(chan bool)
 
-	speaker.Play(beep.Seq(beep.Take(sr.N(1*time.Second), midi.MidiStreamer{}), beep.Callback(func() {
+	speaker.Play(beep.Seq(beep.Take(sr.N(1*time.Second), streamer), beep.Callback(func() {
+		done <- true
+	})))
+	<-done
+}
+
+func TestMIDItoAudio(t *testing.T) {
+	sr := beep.SampleRate(44100)
+	bufLen := sr.N(time.Second / 5)
+	speaker.Init(sr, bufLen)
+
+	player, err := midi.NewPlayer(midi.NewPlayerOpts{
+		SoundFontName: midi.GeneralUser,
+		BufDur:        time.Second * 1,
+	})
+	require.NoError(t, err)
+
+	msg := wsmsg.MIDIMsg{
+		State:    wsmsg.NOTE_ON,
+		Number:   60,
+		Velocity: 127,
+	}
+
+	streamer := midi.NewMIDIStreamer(time.Second * 2)
+	player.Play(msg, streamer)
+
+	done := make(chan bool)
+
+	speaker.Play(beep.Seq(beep.Take(sr.N(1*time.Second), streamer), beep.Callback(func() {
 		done <- true
 	})))
 	<-done
