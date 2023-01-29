@@ -45,9 +45,8 @@ type (
 		jam          tea.Model
 		RESTendpoint string
 		WSendpoint   string
-		rttStats     rtt.CalcMsg
-		// jamSocket    *websocket.Conn // Websocket connection to a Jam Session
-		log log.Logger
+		rttStats     rtt.Stats
+		log          log.Logger
 	}
 )
 
@@ -94,8 +93,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case rmxerr.ErrMsg:
 		m.curError = msg.Err
 
-	case rtt.CalcMsg:
-		m.rttStats = msg
+	case jamui.StatsMsg:
+		m.rttStats = rtt.Stats(msg)
 
 		// Was a key press
 	case tea.KeyMsg:

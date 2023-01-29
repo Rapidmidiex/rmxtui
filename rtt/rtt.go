@@ -2,56 +2,72 @@
 package rtt
 
 import (
+	"fmt"
 	"math"
 	"time"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 type (
-	CalcMsg struct {
+	Stats struct {
 		Latest time.Duration
 		Avg    time.Duration
 		Min    time.Duration
 		Max    time.Duration
+		Count  int
+	}
+
+	Timer struct {
+		timestamps map[string]time.Time
 	}
 )
 
-func CalcStats(ping time.Duration, prev []time.Duration) tea.Cmd {
-	roundedAvg := math.Round(float64(Avg(prev)/time.Millisecond)) * float64(time.Millisecond)
-	return func() tea.Msg {
-		return CalcMsg{
-			Latest: ping,
-			Avg:    time.Duration(roundedAvg),
-			Max:    Max(prev),
-			Min:    Min(prev),
-		}
+func NewStats() Stats {
+	return Stats{
+		Latest: 0,
+		Avg:    0,
+		Min:    math.MaxInt,
+		Max:    -math.MaxInt,
+		Count:  0,
 	}
 }
 
-func Min(times []time.Duration) time.Duration {
-	min := math.Inf(1)
-	for _, t := range times {
-		min = math.Min(min, float64(t))
+func NewTimer() *Timer {
+	return &Timer{
+		timestamps: make(map[string]time.Time),
 	}
-	return time.Duration(min)
 }
 
-func Max(times []time.Duration) time.Duration {
-	max := math.Inf(-1)
-	for _, t := range times {
-		max = math.Max(max, float64(t))
+func (t *Timer) Start(msgID string) error {
+	_, ok := t.timestamps[msgID]
+	if ok {
+		return fmt.Errorf("timer already started for ID: %q", msgID)
 	}
-	return time.Duration(max)
+	t.timestamps[msgID] = time.Now()
+	return nil
 }
 
-func Avg(times []time.Duration) time.Duration {
-	if len(times) == 0 {
-		return 0
+func (t *Timer) Stop(msgID string) time.Duration {
+	ts, ok := t.timestamps[msgID]
+	if !ok {
+		return -1
 	}
-	sum := time.Duration(0)
-	for _, t := range times {
-		sum = sum + t
+
+	delete(t.timestamps, msgID)
+	return time.Since(ts)
+}
+
+func (s Stats) Calc(d time.Duration) Stats {
+	if d < 0 {
+		return s
 	}
-	return sum / time.Duration(len(times))
+	total := time.Duration(s.Count)
+	avg := (total*s.Avg + d) / (total + 1)
+	// roundedAvg := math.Round(float64(avg/time.Millisecond)) * float64(time.Millisecond)
+	return Stats{
+		Latest: d,
+		Avg:    avg,
+		Min:    time.Duration(math.Min(float64(s.Min), float64(d))),
+		Max:    time.Duration(math.Max(float64(s.Max), float64(d))),
+		Count:  s.Count + 1,
+	}
 }

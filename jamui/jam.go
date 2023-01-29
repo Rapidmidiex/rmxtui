@@ -61,6 +61,8 @@ type (
 
 	LeaveRoomMsg struct{}
 
+	StatsMsg rtt.Stats
+
 	sentMsg struct {
 		id     uuid.UUID
 		sentAt time.Time
@@ -101,14 +103,11 @@ type (
 		// Number of available focus status
 		availableFocusStates int
 
-		// Map of times the latest messages were sent.
-		// { [messageID]: timeSentAt }
-		lastMsgs map[string]time.Time
-
-		// List of latest roundtrip times for messages.
-		pings    []time.Duration
-		userName string
-		userID   uuid.UUID
+		// Roundtrip timer for messages.
+		rtTimer   *rtt.Timer
+		pingStats rtt.Stats
+		userName  string
+		userID    uuid.UUID
 
 		curMidiMsg wsmsg.MIDIMsg
 
@@ -137,10 +136,9 @@ func New() model {
 		// If more focus states are added, update number of available states
 		availableFocusStates: 2,
 
-		lastMsgs: make(map[string]time.Time),
-		pings:    make([]time.Duration, 0),
-
-		log: log.Default(),
+		rtTimer:   rtt.NewTimer(),
+		pingStats: rtt.NewStats(),
+		log:       log.Default(),
 	}
 }
 
@@ -191,17 +189,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatui.SendMsg:
 		cmds = append(cmds, m.sendTextMessage(msg.Msg, m.userName))
 	case sentMsg:
-		m.lastMsgs[msg.id.String()] = msg.sentAt
+		// TODO Delete me after testing vv
+		// Curious if this time includes latency.
+		// If this number is 0, delete this log
+		timeToSend := time.Since(msg.sentAt).Milliseconds()
+		if timeToSend > 0 {
+			m.log.Printf("Send time: %d (ms)", timeToSend)
+		}
+		// TODO Delete me after testing ^^
+
+		// Timer started after message sent.
+		// Does not include time to send message.
+		err := m.rtTimer.Start(msg.id.String())
+		cmd := func() tea.Msg { return rmxerr.ErrMsg{Err: err} }
+		cmds = append(cmds, cmd)
 
 	case chatui.RecvTextMsg:
 		m.chatBox, cmd = m.chatBox.Update(msg)
 
-		latest := m.calcPing(msg.ID.String())
-		if latest > 0 {
-			m.pings = append(m.pings, latest)
-		}
+		// TODO: Move to envelope msg handler (not just text)
+		latest := m.rtTimer.Stop(msg.ID.String())
+		m.pingStats = m.pingStats.Calc(latest)
+		pingCmd := func() tea.Msg { return StatsMsg(m.pingStats) }
+
 		// Start listening again
-		cmds = append(cmds, cmd, m.listenSocket(), rtt.CalcStats(latest, m.pings))
+		cmds = append(cmds, cmd, m.listenSocket(), pingCmd)
 
 	case recvConnectMsg:
 		m.userName = msg.userName
@@ -328,25 +340,16 @@ func (m model) sendTextMessage(body, displayName string) tea.Cmd {
 		if err != nil {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("marshal: %w", err)}
 		}
+
+		// Curious to see how long WriteJSON takes
+		preSendTime := time.Now()
 		err = m.Socket.WriteJSON(envelope)
 		if err != nil {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("writeJSON: %w", err)}
 		}
 		return sentMsg{
 			id:     envelope.ID,
-			sentAt: time.Now(),
+			sentAt: preSendTime,
 		}
 	}
-}
-
-// CalcPing looks up the message in the message history and calculates the roundtrip time.
-// If the message is not found, -1 is returned.
-func (m model) calcPing(msgID string) time.Duration {
-	sentAt, ok := m.lastMsgs[msgID]
-	if !ok {
-		return -1
-	}
-
-	delete(m.lastMsgs, msgID)
-	return time.Since(sentAt)
 }
