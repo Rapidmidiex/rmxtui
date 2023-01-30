@@ -11,68 +11,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPlayer(t *testing.T) {
-	opts := midi.NewPlayerOpts{
-		SoundFontName: midi.GeneralUser,
-		BufDur:        time.Second * 3,
-	}
-	player, err := midi.NewPlayer(opts)
-	require.NoError(t, err)
-
-	msg := wsmsg.MIDIMsg{
-		State:    wsmsg.NOTE_ON,
-		Number:   60,
-		Velocity: 127,
-	}
-
-	streamer := midi.NewMIDIStreamer(time.Second)
-
-	player.Play(msg, streamer)
-
-	// TODO: better test
-	require.NotEmpty(t, streamer.Buffers()[0][456])
-	require.NotEmpty(t, streamer.Buffers()[1][456])
-}
-
-func TestMIDIStreamer(t *testing.T) {
-	sr := beep.SampleRate(44100)
-	bufLen := sr.N(time.Second / 5)
-	speaker.Init(sr, bufLen)
-
-	streamer := midi.NewMIDIStreamer(time.Second)
-
-	done := make(chan bool)
-
-	speaker.Play(beep.Seq(beep.Take(sr.N(1*time.Second), streamer), beep.Callback(func() {
-		done <- true
-	})))
-	<-done
-}
-
 func TestMIDItoAudio(t *testing.T) {
 	sr := beep.SampleRate(44100)
-	bufLen := sr.N(time.Second / 5)
+	// TODO: Determine buffer length sweet spot.
+	// Bigger -> less CPU, slower response
+	// Lower -> more CPU, faster response
+	bufLen := sr.N(time.Millisecond * 20)
 	speaker.Init(sr, bufLen)
 
 	player, err := midi.NewPlayer(midi.NewPlayerOpts{
 		SoundFontName: midi.GeneralUser,
-		BufDur:        time.Second * 1,
 	})
 	require.NoError(t, err)
 
 	msg := wsmsg.MIDIMsg{
 		State:    wsmsg.NOTE_ON,
-		Number:   60,
+		Number:   70, // D5
 		Velocity: 127,
 	}
 
-	streamer := midi.NewMIDIStreamer(time.Second * 2)
+	duration := time.Second * 5
+	streamer := midi.NewMIDIStreamer(duration)
 	player.Play(msg, streamer)
 
 	done := make(chan bool)
 
-	speaker.Play(beep.Seq(beep.Take(sr.N(1*time.Second), streamer), beep.Callback(func() {
-		done <- true
-	})))
+	speaker.Play(beep.Seq(
+		beep.Take(sr.N(duration), streamer),
+		beep.Callback(func() {
+			done <- true
+		})))
 	<-done
 }

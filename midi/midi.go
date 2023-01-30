@@ -22,7 +22,6 @@ type (
 		soundFontPaths map[SoundFontName]string
 		synth          *meltysynth.Synthesizer
 		synthSettings  *meltysynth.SynthesizerSettings
-		bufSecs        int32
 	}
 
 	SoundFontName int
@@ -30,8 +29,6 @@ type (
 	NewPlayerOpts struct {
 		// Name of SoundFont to use for the synthesizer.
 		SoundFontName SoundFontName
-		// Audio buffer length.
-		BufDur time.Duration
 	}
 
 	MidiStreamer struct {
@@ -66,7 +63,6 @@ func NewPlayer(o NewPlayerOpts) (Player, error) {
 		soundFontPaths: soundFonts,
 		synth:          synthesizer,
 		synthSettings:  settings,
-		bufSecs:        int32(o.BufDur.Seconds()),
 	}, nil
 }
 
@@ -110,11 +106,6 @@ func (ms *MidiStreamer) Stream(samples [][2]float64) (n int, ok bool) {
 
 func (ms MidiStreamer) Err() error {
 	return nil
-}
-
-// TODO: Delete me
-func (ms MidiStreamer) Buffers() [2][]float32 {
-	return [2][]float32{ms.left, ms.right}
 }
 
 func (ms *MidiStreamer) Read(outLeft, outRight []float32) (int, error) {
