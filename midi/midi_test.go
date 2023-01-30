@@ -17,29 +17,77 @@ func TestMIDItoAudio(t *testing.T) {
 	// Bigger -> less CPU, slower response
 	// Lower -> more CPU, faster response
 	bufLen := sr.N(time.Millisecond * 20)
+	noteDuration := time.Second * 5
 	speaker.Init(sr, bufLen)
-
 	player, err := midi.NewPlayer(midi.NewPlayerOpts{
 		SoundFontName: midi.GeneralUser,
 	})
 	require.NoError(t, err)
 
-	msg := wsmsg.MIDIMsg{
-		State:    wsmsg.NOTE_ON,
-		Number:   70, // D5
-		Velocity: 127,
-	}
+	t.Run("converts an RMX MIDI message to stereo sound", func(t *testing.T) {
+		msg := wsmsg.MIDIMsg{
+			State:    wsmsg.NOTE_ON,
+			Number:   70, // Bb4
+			Velocity: 127,
+		}
 
-	duration := time.Second * 5
-	streamer := midi.NewMIDIStreamer(duration)
-	player.Play(msg, streamer)
+		streamer := midi.NewMIDIStreamer(noteDuration)
+		player.Play(msg, streamer)
 
-	done := make(chan bool)
+		done := make(chan bool)
 
-	speaker.Play(beep.Seq(
-		beep.Take(sr.N(duration), streamer),
-		beep.Callback(func() {
-			done <- true
-		})))
-	<-done
+		speaker.Play(beep.Seq(
+			beep.Take(sr.N(noteDuration), streamer),
+			// callback called after the above streamer is complete, since we're using Seq().
+			beep.Callback(func() {
+				done <- true
+			}),
+		))
+
+		// Wait for the callback streamer to run
+		<-done
+	})
+
+	t.Run("plays multiple notes at once", func(t *testing.T) {
+		streamer1 := midi.NewMIDIStreamer(noteDuration)
+		player.Play(wsmsg.MIDIMsg{
+			State:    wsmsg.NOTE_ON,
+			Number:   70, // Bb4
+			Velocity: 127,
+		}, streamer1)
+
+		streamer2 := midi.NewMIDIStreamer(noteDuration)
+		player.Play(wsmsg.MIDIMsg{
+			State:    wsmsg.NOTE_ON,
+			Number:   67, // G4
+			Velocity: 127,
+		}, streamer2)
+
+		streamer3 := midi.NewMIDIStreamer(noteDuration)
+		player.Play(wsmsg.MIDIMsg{
+			State:    wsmsg.NOTE_ON,
+			Number:   76, // E5
+			Velocity: 108,
+		}, streamer3)
+
+		mixer := beep.Mixer{}
+		mixer.Add(
+			beep.Take(sr.N(noteDuration), streamer1),
+			beep.Take(sr.N(noteDuration), streamer2),
+		)
+
+		// Only need to call Play once.
+		// The mixer will play silence if the streamers are drained.
+		speaker.Play(&mixer)
+
+		// Add another note after a pause
+		time.Sleep(time.Millisecond * 300)
+		mixer.Add(
+			beep.Take(sr.N(noteDuration), streamer3),
+		)
+
+		// Wait for speaker to finish playing
+		// (Callback does not work with the mixer)
+		time.Sleep(noteDuration + time.Second/2)
+	})
 }
