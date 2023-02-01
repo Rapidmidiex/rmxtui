@@ -82,18 +82,11 @@ type (
 		msg wsmsg.MIDIMsg
 	}
 
-	// Virtual keyboard types
-	pianoKey struct {
-		noteNumber int    // MIDI note number ie: 72
-		name       string // Name of musical note, ie: "C5"
-		keyMap     string // Mapped qwerty keyboard key. Ex: "q"
-	}
-
 	focused int
 
 	model struct {
-		// Piano keys. {"q": pianoKey{72, "C5", "q", ...}}
-		piano []pianoKey
+		// Piano keys.
+		pianoNotes vpiano.Notes
 		// Currently active piano keys
 		activeKeys map[string]struct{}
 		// Websocket connection for current Jam Session
@@ -142,18 +135,10 @@ func New() (model, error) {
 		return model{}, fmt.Errorf("speaker.Init: %w", err)
 	}
 
-	m := model{
-		piano: []pianoKey{
-			{72, "C5", "q"},
-			{74, "D5", "w"},
-			{76, "E5", "e"},
-			{77, "F5", "r"},
-			{79, "G5", "t"},
-			{81, "A5", "y"},
-			{83, "B5", "u"},
-			{84, "C6", "i"},
-		},
+	pianoNotes := vpiano.MakeOctaveNotes(vpiano.C4)
 
+	m := model{
+		pianoNotes: pianoNotes,
 		activeKeys: make(map[string]struct{}),
 
 		chatBox: chatui.New(),
@@ -164,7 +149,7 @@ func New() (model, error) {
 
 		rtTimer:    rtt.NewTimer(),
 		pingStats:  rtt.NewStats(),
-		noteKeyMap: vpiano.MakeOctaveNotes(vpiano.C4).ToBindingMap(),
+		noteKeyMap: pianoNotes.ToBindingMap(),
 		midiPlayer: midiPlayer,
 		mixer:      &beep.Mixer{},
 		sampleRate: sr,
@@ -277,19 +262,8 @@ func (m model) View() string {
 		docStyle = docStyle.MaxWidth(physicalWidth)
 	}
 
-	// Keyboard
-	keyboard := lipgloss.JoinHorizontal(lipgloss.Top,
-		pianoKeyStyle.Render("C5"+"\n\n"+"(q)"),
-		pianoKeyStyle.Render("D5"+"\n\n"+"(w)"),
-		pianoKeyStyle.Render("E5"+"\n\n"+"(e)"),
-		pianoKeyStyle.Render("F5"+"\n\n"+"(r)"),
-		pianoKeyStyle.Render("G5"+"\n\n"+"(t)"),
-		pianoKeyStyle.Render("A5"+"\n\n"+"(y)"),
-		pianoKeyStyle.Render("B5"+"\n\n"+"(u)"),
-		pianoKeyStyle.Render("C6"+"\n\n"+"(i)"),
-	)
 	doc.WriteString(m.chatBox.View())
-	doc.WriteString(keyboard + "\n\n")
+	doc.WriteString(m.renderPiano() + "\n\n")
 	return docStyle.Render(doc.String())
 }
 
@@ -445,4 +419,18 @@ func (m *model) playMIDI(note wsmsg.MIDIMsg) tea.Cmd {
 
 		return nil
 	}
+}
+
+func (m model) renderPiano() string {
+	pianoKeys := make([]string, 0)
+	for _, v := range m.pianoNotes {
+		if v.IsAccidental {
+			// TODO: Figure out black keys
+			continue
+		}
+		pianoKeys = append(pianoKeys,
+			pianoKeyStyle.Render(lipgloss.JoinVertical(lipgloss.Top, v.Name, "\n", fmt.Sprintf("(%s)", v.KeyBinding))),
+		)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, pianoKeys...)
 }
