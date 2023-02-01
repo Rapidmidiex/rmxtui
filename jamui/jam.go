@@ -108,7 +108,6 @@ type (
 		userID    uuid.UUID
 
 		curMidiMsg wsmsg.MIDIMsg
-		midiPlayer midi.Player
 		mixer      *beep.Mixer
 		sampleRate beep.SampleRate
 		noteKeyMap vpiano.NoteKeyMap
@@ -117,20 +116,12 @@ type (
 )
 
 func New() (model, error) {
-	midiPlayer, err := midi.NewPlayer(midi.NewPlayerOpts{
-		// TODO: Take soundFont as arg, or select in TUI
-		SoundFontName: midi.GeneralUser,
-	})
-	if err != nil {
-		return model{}, fmt.Errorf("midi.NewPlayer: %w", err)
-	}
-
 	sr := beep.SampleRate(44100)
 	// TODO: Determine buffer length sweet spot.
 	// Bigger -> less CPU, slower response
 	// Lower -> more CPU, faster response
 	bufLen := sr.N(time.Millisecond * 20)
-	err = speaker.Init(sr, bufLen)
+	err := speaker.Init(sr, bufLen)
 	if err != nil {
 		return model{}, fmt.Errorf("speaker.Init: %w", err)
 	}
@@ -150,7 +141,6 @@ func New() (model, error) {
 		rtTimer:    rtt.NewTimer(),
 		pingStats:  rtt.NewStats(),
 		noteKeyMap: pianoNotes.ToBindingMap(),
-		midiPlayer: midiPlayer,
 		mixer:      &beep.Mixer{},
 		sampleRate: sr,
 		log:        log.Default(),
@@ -405,13 +395,22 @@ func (m model) sendMIDIMessage(keyPressed string) tea.Cmd {
 // PlayMIDI plays the given MIDI note through system audio.
 func (m *model) playMIDI(note wsmsg.MIDIMsg) tea.Cmd {
 	return func() tea.Msg {
+		// Need to create a new MIDI renderer on every note to prevent panics from the same renderer working on the same buffer concurrently
+		midiPlayer, err := midi.NewPlayer(midi.NewPlayerOpts{
+			// TODO: Take soundFont from note
+			SoundFontName: midi.GeneralUser,
+		})
+		if err != nil {
+			return rmxerr.ErrMsg{Err: fmt.Errorf("midi.NewPlayer: %w", err)}
+		}
+
 		// NOTE_OFF messages are not really going to work with a virtual keyboard
 		// or with sending realtime messages, so we have to use some arbitrary duration to play the note.
 		// TODO: Maybe control duration with some other key
 		duration := time.Second * 2
 		s := midi.NewMIDIStreamer(duration)
 		// Render MIDI note to audio streamer buffer
-		m.midiPlayer.Play(note, s)
+		midiPlayer.Play(note, s)
 
 		// Take n seconds worth of samples @ 44.1khz from the audio streamer and
 		// add it to the main speaker mix.
