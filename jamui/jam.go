@@ -16,6 +16,7 @@ import (
 	"github.com/rapidmidiex/rmxtui/keymap"
 	"github.com/rapidmidiex/rmxtui/rmxerr"
 	"github.com/rapidmidiex/rmxtui/rtt"
+	"github.com/rapidmidiex/rmxtui/vpiano"
 	"github.com/rapidmidiex/rmxtui/wsmsg"
 	"golang.org/x/term"
 )
@@ -111,7 +112,8 @@ type (
 
 		curMidiMsg wsmsg.MIDIMsg
 
-		log *log.Logger
+		noteKeyMap vpiano.NoteKeyMap
+		log        *log.Logger
 	}
 )
 
@@ -136,9 +138,10 @@ func New() model {
 		// If more focus states are added, update number of available states
 		availableFocusStates: 2,
 
-		rtTimer:   rtt.NewTimer(),
-		pingStats: rtt.NewStats(),
-		log:       log.Default(),
+		rtTimer:    rtt.NewTimer(),
+		pingStats:  rtt.NewStats(),
+		noteKeyMap: vpiano.MakeOctaveNotes(vpiano.C4).ToBindingMap(),
+		log:        log.Default(),
 	}
 }
 
@@ -173,9 +176,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chatBox, cmd = m.chatBox.Update(msg)
 			cmds = append(cmds, cmd)
 		case pianoFocus:
-			// TODO: play the piano
-			// - highlight the key play
-			// - run send note command
+			// TODO: highlight the key play
+			cmds = append(cmds, m.sendMIDIMessage(msg.String()))
 		}
 		// *** End KeyMsg ***
 		return m, tea.Batch(cmds...)
@@ -187,7 +189,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.listenSocket())
 
 	case chatui.SendMsg:
-		cmds = append(cmds, m.sendTextMessage(msg.Msg, m.userName))
+		cmds = append(cmds, m.sendTextMessage(msg.Msg))
 	case sentMsg:
 		// TODO Delete me after testing vv
 		// Curious if this time includes latency.
@@ -317,7 +319,7 @@ func (m model) listenSocket() tea.Cmd {
 			if err := message.Unwrap(&midiMsg); err != nil {
 				return rmxerr.ErrMsg{Err: fmt.Errorf("unmarshal MIDIMsg: %+v\n%w", message, err)}
 			}
-			m.log.Println(midiMsg)
+			m.log.Printf("MIDI received: %+v\n", midiMsg)
 			return recvMIDIMsg{
 				msg: midiMsg,
 			}
@@ -328,14 +330,14 @@ func (m model) listenSocket() tea.Cmd {
 
 }
 
-func (m model) sendTextMessage(body, displayName string) tea.Cmd {
+func (m model) sendTextMessage(body string) tea.Cmd {
 	return func() tea.Msg {
 		envelope := wsmsg.Envelope{
 			ID:     uuid.New(),
 			Typ:    wsmsg.TEXT,
 			UserID: m.userID,
 		}
-		textMsg := wsmsg.TextMsg{Body: body, DisplayName: displayName}
+		textMsg := wsmsg.TextMsg{Body: body, DisplayName: m.userName}
 		err := envelope.SetPayload(textMsg)
 		if err != nil {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("marshal: %w", err)}
@@ -350,6 +352,39 @@ func (m model) sendTextMessage(body, displayName string) tea.Cmd {
 		return sentMsg{
 			id:     envelope.ID,
 			sentAt: preSendTime,
+		}
+	}
+}
+
+func (m model) sendMIDIMessage(keyPressed string) tea.Cmd {
+	return func() tea.Msg {
+		midiNum := m.noteKeyMap[keyPressed].MIDI
+		if !vpiano.InRange(midiNum) {
+			return nil
+		}
+
+		msg := wsmsg.MIDIMsg{
+			State:    wsmsg.NOTE_ON,
+			Velocity: 127,
+			Number:   midiNum,
+		}
+
+		envelope := wsmsg.Envelope{
+			ID:     uuid.New(),
+			Typ:    wsmsg.MIDI,
+			UserID: m.userID,
+		}
+
+		if err := envelope.SetPayload(msg); err != nil {
+			return rmxerr.ErrMsg{Err: fmt.Errorf("marshal: %w", err)}
+		}
+
+		if err := m.Socket.WriteJSON(envelope); err != nil {
+			return rmxerr.ErrMsg{Err: fmt.Errorf("writeJSON: %w", err)}
+		}
+		return sentMsg{
+			id:     envelope.ID,
+			sentAt: time.Now(),
 		}
 	}
 }

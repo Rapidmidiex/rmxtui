@@ -12,6 +12,10 @@ type (
 		KeyBinding string
 	}
 
+	Notes []Note
+
+	NoteKeyMap map[string]Note
+
 	octave int
 )
 
@@ -46,7 +50,7 @@ var noteNames = []struct {
 	{name: "G#/Ab", isAccidental: true}}
 
 // MakeOctaveNotes creates list of piano note, MIDI #, qwerty keyboard bindings given an octave name, for example "C4". The keybindings start a C, using the home row for naturals and q-row for accidentals, in an attempt to map close to actual piano fingerings.
-func MakeOctaveNotes(octave octave) []Note {
+func MakeOctaveNotes(octave octave) Notes {
 	// qwerty keys ordered to allow for fingering similar to a real piano.
 	qwertyKeys := []string{"a", "w", "s", "e", "d", "f", "t", "g", "y", "h", "u", "j", "k", "o", "l", "p", ";", "'"}
 	// MIDI number for C0
@@ -71,4 +75,16 @@ func MakeOctaveNotes(octave octave) []Note {
 	}
 
 	return notes
+}
+
+func (notes Notes) ToBindingMap() NoteKeyMap {
+	nMap := make(NoteKeyMap, 0)
+	for _, n := range notes {
+		nMap[n.KeyBinding] = n
+	}
+	return nMap
+}
+
+func InRange(midiNum int) bool {
+	return midiNum > 20 && midiNum < 128
 }
