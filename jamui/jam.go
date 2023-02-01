@@ -10,10 +10,13 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/faiface/beep"
+	"github.com/faiface/beep/speaker"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/rapidmidiex/rmxtui/chatui"
 	"github.com/rapidmidiex/rmxtui/keymap"
+	"github.com/rapidmidiex/rmxtui/midi"
 	"github.com/rapidmidiex/rmxtui/rmxerr"
 	"github.com/rapidmidiex/rmxtui/rtt"
 	"github.com/rapidmidiex/rmxtui/vpiano"
@@ -75,6 +78,7 @@ type (
 	}
 
 	recvMIDIMsg struct {
+		id  uuid.UUID
 		msg wsmsg.MIDIMsg
 	}
 
@@ -111,14 +115,34 @@ type (
 		userID    uuid.UUID
 
 		curMidiMsg wsmsg.MIDIMsg
-
+		midiPlayer midi.Player
+		mixer      *beep.Mixer
+		sampleRate beep.SampleRate
 		noteKeyMap vpiano.NoteKeyMap
 		log        *log.Logger
 	}
 )
 
-func New() model {
-	return model{
+func New() (model, error) {
+	midiPlayer, err := midi.NewPlayer(midi.NewPlayerOpts{
+		// TODO: Take soundFont as arg, or select in TUI
+		SoundFontName: midi.GeneralUser,
+	})
+	if err != nil {
+		return model{}, fmt.Errorf("midi.NewPlayer: %w", err)
+	}
+
+	sr := beep.SampleRate(44100)
+	// TODO: Determine buffer length sweet spot.
+	// Bigger -> less CPU, slower response
+	// Lower -> more CPU, faster response
+	bufLen := sr.N(time.Millisecond * 20)
+	err = speaker.Init(sr, bufLen)
+	if err != nil {
+		return model{}, fmt.Errorf("speaker.Init: %w", err)
+	}
+
+	m := model{
 		piano: []pianoKey{
 			{72, "C5", "q"},
 			{74, "D5", "w"},
@@ -141,8 +165,14 @@ func New() model {
 		rtTimer:    rtt.NewTimer(),
 		pingStats:  rtt.NewStats(),
 		noteKeyMap: vpiano.MakeOctaveNotes(vpiano.C4).ToBindingMap(),
+		midiPlayer: midiPlayer,
+		mixer:      &beep.Mixer{},
+		sampleRate: sr,
 		log:        log.Default(),
 	}
+
+	speaker.Play(m.mixer)
+	return m, nil
 }
 
 func (m model) Init() tea.Cmd {
@@ -224,8 +254,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd, m.listenSocket())
 	case recvMIDIMsg:
 		m.curMidiMsg = msg.msg
+
+		// TODO: Move to envelope msg handler (not just text)
+		latest := m.rtTimer.Stop(msg.id.String())
+		m.pingStats = m.pingStats.Calc(latest)
+		pingCmd := func() tea.Msg { return StatsMsg(m.pingStats) }
+
+		// Play MIDI on speakers
+		cmd = m.playMIDI(msg.msg)
 		// Start listening again
-		cmds = append(cmds, cmd, m.listenSocket())
+		cmds = append(cmds, cmd, m.listenSocket(), pingCmd)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -321,6 +359,7 @@ func (m model) listenSocket() tea.Cmd {
 			}
 			m.log.Printf("MIDI received: %+v\n", midiMsg)
 			return recvMIDIMsg{
+				id:  message.ID,
 				msg: midiMsg,
 			}
 		default:
@@ -386,5 +425,24 @@ func (m model) sendMIDIMessage(keyPressed string) tea.Cmd {
 			id:     envelope.ID,
 			sentAt: time.Now(),
 		}
+	}
+}
+
+// PlayMIDI plays the given MIDI note through system audio.
+func (m *model) playMIDI(note wsmsg.MIDIMsg) tea.Cmd {
+	return func() tea.Msg {
+		// NOTE_OFF messages are not really going to work with a virtual keyboard
+		// or with sending realtime messages, so we have to use some arbitrary duration to play the note.
+		// TODO: Maybe control duration with some other key
+		duration := time.Second * 2
+		s := midi.NewMIDIStreamer(duration)
+		// Render MIDI note to audio streamer buffer
+		m.midiPlayer.Play(note, s)
+
+		// Take n seconds worth of samples @ 44.1khz from the audio streamer and
+		// add it to the main speaker mix.
+		m.mixer.Add(beep.Take(m.sampleRate.N(duration), s))
+
+		return nil
 	}
 }

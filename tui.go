@@ -66,11 +66,14 @@ func NewModel(serverHostURL string, debugMode bool) (mainModel, error) {
 	}
 
 	wsHostURL.Scheme = "ws" + strings.TrimPrefix(wsHostURL.Scheme, "http")
-
+	jamModel, err := jamui.New()
+	if err != nil {
+		return mainModel{}, err
+	}
 	return mainModel{
 		curView:      lobbyView,
 		lobby:        lobbyui.New(serverHostURL + "/api/v1"),
-		jam:          jamui.New(),
+		jam:          jamModel,
 		RESTendpoint: serverHostURL + "/api/v1",
 		WSendpoint:   wsHostURL.String() + "/ws",
 		log:          *log.Default(),
