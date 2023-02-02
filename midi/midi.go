@@ -33,6 +33,7 @@ type (
 	}
 
 	MidiStreamer struct {
+		err   error
 		pos   int
 		left  []float32
 		right []float32
@@ -104,8 +105,11 @@ func (ms *MidiStreamer) Stream(samples [][2]float64) (n int, ok bool) {
 	left := make([]float32, len(samples))
 	right := make([]float32, len(samples))
 
-	ms.Read(left, right)
-
+	_, err := ms.Read(left, right)
+	if err != nil {
+		ms.err = err
+		return
+	}
 	for i := range samples {
 		samples[i][0] = float64(left[i])
 		samples[i][1] = float64(right[i])
@@ -134,7 +138,7 @@ func (ms *MidiStreamer) Seek(p int) error {
 }
 
 func (ms MidiStreamer) Err() error {
-	return nil
+	return ms.err
 }
 
 // Read reads from the MIDIStreamer's left/right buffers at the current Pos and writes the contents to the out []float32 buffers.

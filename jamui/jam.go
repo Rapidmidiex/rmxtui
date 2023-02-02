@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -89,8 +90,10 @@ type (
 		pianoNotes vpiano.Notes
 		// Currently active piano keys
 		activeKeys map[string]struct{}
-		// Websocket connection for current Jam Session
-		Socket *websocket.Conn
+
+		// Websocket client
+		wsClient *wsClient
+
 		// Jam Session ID
 		ID string
 		// Chat container
@@ -107,12 +110,23 @@ type (
 		userName  string
 		userID    uuid.UUID
 
-		curMidiMsg wsmsg.MIDIMsg
-		midiPlayer midi.Synth
-		mixer      *beep.Mixer
-		sampleRate beep.SampleRate
-		noteKeyMap vpiano.NoteKeyMap
-		log        *log.Logger
+		curMidiMsg  wsmsg.MIDIMsg
+		midiPlayer  midi.Synth
+		audioPlayer *audioPlayer
+		sampleRate  beep.SampleRate
+		noteKeyMap  vpiano.NoteKeyMap
+		log         *log.Logger
+	}
+
+	wsClient struct {
+		mu sync.Mutex
+		// Websocket connection for current Jam Session
+		conn *websocket.Conn
+	}
+
+	audioPlayer struct {
+		mu    sync.Mutex
+		mixer *beep.Mixer
 	}
 )
 
@@ -147,16 +161,16 @@ func New() (model, error) {
 		// If more focus states are added, update number of available states
 		availableFocusStates: 2,
 
-		rtTimer:    rtt.NewTimer(),
-		pingStats:  rtt.NewStats(),
-		noteKeyMap: pianoNotes.ToBindingMap(),
-		midiPlayer: midiPlayer,
-		mixer:      &beep.Mixer{},
-		sampleRate: sr,
-		log:        log.Default(),
+		rtTimer:     rtt.NewTimer(),
+		pingStats:   rtt.NewStats(),
+		noteKeyMap:  pianoNotes.ToBindingMap(),
+		midiPlayer:  midiPlayer,
+		audioPlayer: &audioPlayer{mixer: &beep.Mixer{}},
+		sampleRate:  sr,
+		log:         log.Default(),
 	}
 
-	speaker.Play(m.mixer)
+	speaker.Play(m.audioPlayer.mixer)
 	return m, nil
 }
 
@@ -199,7 +213,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Entered the Jam Session
 	case ConnectedMsg:
-		m.Socket = msg.WS
+		m.wsClient = &wsClient{conn: msg.WS}
 		m.ID = msg.JamID
 		cmds = append(cmds, m.listenSocket())
 
@@ -270,11 +284,11 @@ func (m model) View() string {
 // LeaveRoom disconnects from the room and sends a LeaveRoom message.
 func (m model) leaveRoom() tea.Cmd {
 	return func() tea.Msg {
-		if m.Socket == nil {
+		if m.wsClient.conn == nil {
 			return LeaveRoomMsg{}
 		}
 		// Send websocket close message
-		err := m.Socket.WriteControl(
+		err := m.wsClient.conn.WriteControl(
 			websocket.CloseMessage,
 			nil,
 			time.Now().Add(time.Second*10),
@@ -291,7 +305,7 @@ func (m model) listenSocket() tea.Cmd {
 	// https://github.com/charmbracelet/bubbletea/issues/25#issuecomment-732339162
 	return func() tea.Msg {
 		var message wsmsg.Envelope
-		err := m.Socket.ReadJSON(&message)
+		err := m.wsClient.readMsg(&message)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				return rmxerr.ErrMsg{Err: fmt.Errorf("readJSON: unexpected close: %w", err)}
@@ -358,7 +372,7 @@ func (m model) sendTextMessage(body string) tea.Cmd {
 
 		// Curious to see how long WriteJSON takes
 		preSendTime := time.Now()
-		err = m.Socket.WriteJSON(envelope)
+		err = m.wsClient.conn.WriteJSON(envelope)
 		if err != nil {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("writeJSON: %w", err)}
 		}
@@ -391,8 +405,7 @@ func (m model) sendMIDIMessage(keyPressed string) tea.Cmd {
 		if err := envelope.SetPayload(msg); err != nil {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("marshal: %w", err)}
 		}
-
-		if err := m.Socket.WriteJSON(envelope); err != nil {
+		if err := m.wsClient.writeMsg(envelope); err != nil {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("writeJSON: %w", err)}
 		}
 		return sentMsg{
@@ -410,12 +423,15 @@ func (m *model) playMIDI(note wsmsg.MIDIMsg) tea.Cmd {
 		// TODO: Maybe control duration with some other key
 		duration := time.Second * 2
 		s := midi.NewMIDIStreamer(duration)
+
 		// Render MIDI note to audio streamer buffer
-		m.midiPlayer.Render(note, s)
+		if err := m.midiPlayer.Render(note, s); err != nil {
+			return rmxerr.ErrMsg{Err: err}
+		}
 
 		// Take n seconds worth of samples @ 44.1khz from the audio streamer and
 		// add it to the main speaker mix.
-		m.mixer.Add(beep.Take(m.sampleRate.N(duration), s))
+		m.audioPlayer.addToMix(beep.Take(m.sampleRate.N(duration), s))
 
 		return nil
 	}
@@ -433,4 +449,20 @@ func (m model) renderPiano() string {
 		)
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, pianoKeys...)
+}
+
+func (c *wsClient) readMsg(out *wsmsg.Envelope) error {
+	return c.conn.ReadJSON(out)
+}
+
+func (c *wsClient) writeMsg(envelope wsmsg.Envelope) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn.WriteJSON(envelope)
+}
+
+func (a *audioPlayer) addToMix(s beep.Streamer) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.mixer.Add(s)
 }

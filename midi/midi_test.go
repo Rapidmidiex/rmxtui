@@ -18,7 +18,9 @@ func TestMIDItoAudio(t *testing.T) {
 	// Lower -> more CPU, faster response
 	bufLen := sr.N(time.Millisecond * 20)
 	noteDuration := time.Second * 5
-	speaker.Init(sr, bufLen)
+	err := speaker.Init(sr, bufLen)
+	require.NoError(t, err)
+
 	synth, err := midi.NewSynth(midi.NewSynthOpts{
 		SoundFontName: midi.GeneralUser,
 	})
@@ -32,7 +34,8 @@ func TestMIDItoAudio(t *testing.T) {
 		}
 
 		streamer := midi.NewMIDIStreamer(noteDuration)
-		synth.Render(msg, streamer)
+		err := synth.Render(msg, streamer)
+		require.NoError(t, err)
 
 		done := make(chan bool)
 
@@ -50,25 +53,28 @@ func TestMIDItoAudio(t *testing.T) {
 
 	t.Run("plays multiple notes at once", func(t *testing.T) {
 		streamer1 := midi.NewMIDIStreamer(noteDuration)
-		synth.Render(wsmsg.MIDIMsg{
+		err := synth.Render(wsmsg.MIDIMsg{
 			State:    wsmsg.NOTE_ON,
 			Number:   70, // Bb4
 			Velocity: 127,
 		}, streamer1)
+		require.NoError(t, err)
 
 		streamer2 := midi.NewMIDIStreamer(noteDuration)
-		synth.Render(wsmsg.MIDIMsg{
+		err = synth.Render(wsmsg.MIDIMsg{
 			State:    wsmsg.NOTE_ON,
 			Number:   67, // G4
 			Velocity: 127,
 		}, streamer2)
+		require.NoError(t, err)
 
 		streamer3 := midi.NewMIDIStreamer(noteDuration)
-		synth.Render(wsmsg.MIDIMsg{
+		err = synth.Render(wsmsg.MIDIMsg{
 			State:    wsmsg.NOTE_ON,
 			Number:   76, // E5
 			Velocity: 108,
 		}, streamer3)
+		require.NoError(t, err)
 
 		mixer := beep.Mixer{}
 		mixer.Add(
@@ -93,24 +99,27 @@ func TestMIDItoAudio(t *testing.T) {
 
 	t.Run("plays chords", func(t *testing.T) {
 		streamer1 := midi.NewMIDIStreamer(noteDuration)
-		synth.Render(wsmsg.MIDIMsg{
+		err := synth.Render(wsmsg.MIDIMsg{
 			State:    wsmsg.NOTE_ON,
 			Number:   40,
 			Velocity: 127,
 		}, streamer1)
+		require.NoError(t, err)
 
 		streamer2 := midi.NewMIDIStreamer(noteDuration)
-		synth.Render(wsmsg.MIDIMsg{
+		err = synth.Render(wsmsg.MIDIMsg{
 			State:    wsmsg.NOTE_ON,
 			Number:   42,
 			Velocity: 108,
 		}, streamer2)
+		require.NoError(t, err)
 
 		mixer := beep.Mixer{}
 		mixer.Add(
 			beep.Take(sr.N(noteDuration), streamer1),
 			beep.Take(sr.N(noteDuration), streamer2),
 		)
+		require.NoError(t, mixer.Err())
 
 		// Only need to call Play once.
 		// The mixer will play silence if the streamers are drained.
