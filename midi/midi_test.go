@@ -90,4 +90,41 @@ func TestMIDItoAudio(t *testing.T) {
 		// (Callback does not work with the mixer)
 		time.Sleep(noteDuration + time.Second/2)
 	})
+
+	t.Run("plays chords", func(t *testing.T) {
+		streamer1 := midi.NewMIDIStreamer(noteDuration)
+		player.Play(wsmsg.MIDIMsg{
+			State:    wsmsg.NOTE_ON,
+			Number:   67, // G4
+			Velocity: 127,
+		}, streamer1)
+
+		streamer2 := midi.NewMIDIStreamer(noteDuration)
+		player.Play(wsmsg.MIDIMsg{
+			State:    wsmsg.NOTE_ON,
+			Number:   76, // E5
+			Velocity: 108,
+		}, streamer2)
+
+		mixer := beep.Mixer{}
+		mixer.Add(
+			beep.Take(sr.N(noteDuration), streamer1),
+			beep.Take(sr.N(noteDuration), streamer2),
+		)
+
+		// Only need to call Play once.
+		// The mixer will play silence if the streamers are drained.
+		speaker.Play(&mixer)
+
+		// Play another note concurrently, ie a chord.
+		go func(streamer beep.Streamer) {
+			mixer.Add(
+				beep.Take(sr.N(noteDuration), streamer2),
+			)
+		}(streamer2)
+
+		// Wait for speaker to finish playing
+		// (Callback does not work with the mixer)
+		time.Sleep(noteDuration + time.Millisecond*100)
+	})
 }
