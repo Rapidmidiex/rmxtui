@@ -17,7 +17,7 @@ var DefaultMapping = Mapping{
 		key.WithHelp("tab", "cycle focus"),
 	),
 	GoBack: key.NewBinding(
-		key.WithKeys("q", "esc"),
+		key.WithKeys("esc"),
 		key.WithHelp("esc", "go back"),
 	),
 	Quit: key.NewBinding(

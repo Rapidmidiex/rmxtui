@@ -5,17 +5,22 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/faiface/beep"
+	"github.com/faiface/beep/speaker"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/rapidmidiex/rmxtui/chatui"
 	"github.com/rapidmidiex/rmxtui/keymap"
+	"github.com/rapidmidiex/rmxtui/midi"
 	"github.com/rapidmidiex/rmxtui/rmxerr"
 	"github.com/rapidmidiex/rmxtui/rtt"
+	"github.com/rapidmidiex/rmxtui/vpiano"
 	"github.com/rapidmidiex/rmxtui/wsmsg"
 	"golang.org/x/term"
 )
@@ -74,25 +79,21 @@ type (
 	}
 
 	recvMIDIMsg struct {
+		id  uuid.UUID
 		msg wsmsg.MIDIMsg
-	}
-
-	// Virtual keyboard types
-	pianoKey struct {
-		noteNumber int    // MIDI note number ie: 72
-		name       string // Name of musical note, ie: "C5"
-		keyMap     string // Mapped qwerty keyboard key. Ex: "q"
 	}
 
 	focused int
 
 	model struct {
-		// Piano keys. {"q": pianoKey{72, "C5", "q", ...}}
-		piano []pianoKey
+		// Piano keys.
+		pianoNotes vpiano.Notes
 		// Currently active piano keys
 		activeKeys map[string]struct{}
-		// Websocket connection for current Jam Session
-		Socket *websocket.Conn
+
+		// Websocket client
+		wsClient *wsClient
+
 		// Jam Session ID
 		ID string
 		// Chat container
@@ -109,25 +110,49 @@ type (
 		userName  string
 		userID    uuid.UUID
 
-		curMidiMsg wsmsg.MIDIMsg
+		curMidiMsg  wsmsg.MIDIMsg
+		midiPlayer  midi.Synth
+		audioPlayer *audioPlayer
+		sampleRate  beep.SampleRate
+		noteKeyMap  vpiano.NoteKeyMap
+		log         *log.Logger
+	}
 
-		log *log.Logger
+	wsClient struct {
+		mu sync.Mutex
+		// Websocket connection for current Jam Session
+		conn *websocket.Conn
+	}
+
+	audioPlayer struct {
+		mu    sync.Mutex
+		mixer *beep.Mixer
 	}
 )
 
-func New() model {
-	return model{
-		piano: []pianoKey{
-			{72, "C5", "q"},
-			{74, "D5", "w"},
-			{76, "E5", "e"},
-			{77, "F5", "r"},
-			{79, "G5", "t"},
-			{81, "A5", "y"},
-			{83, "B5", "u"},
-			{84, "C6", "i"},
-		},
+func New() (model, error) {
+	midiPlayer, err := midi.NewSynth(midi.NewSynthOpts{
+		// TODO: Take soundFont as arg, or select in TUI
+		SoundFontName: midi.GeneralUser,
+	})
+	if err != nil {
+		return model{}, fmt.Errorf("midi.NewPlayer: %w", err)
+	}
 
+	sr := beep.SampleRate(44100)
+	// TODO: Determine buffer length sweet spot.
+	// Bigger -> less CPU, slower response
+	// Lower -> more CPU, faster response
+	bufLen := sr.N(time.Millisecond * 20)
+	err = speaker.Init(sr, bufLen)
+	if err != nil {
+		return model{}, fmt.Errorf("speaker.Init: %w", err)
+	}
+
+	pianoNotes := vpiano.MakeOctaveNotes(vpiano.C4)
+
+	m := model{
+		pianoNotes: pianoNotes,
 		activeKeys: make(map[string]struct{}),
 
 		chatBox: chatui.New(),
@@ -136,10 +161,17 @@ func New() model {
 		// If more focus states are added, update number of available states
 		availableFocusStates: 2,
 
-		rtTimer:   rtt.NewTimer(),
-		pingStats: rtt.NewStats(),
-		log:       log.Default(),
+		rtTimer:     rtt.NewTimer(),
+		pingStats:   rtt.NewStats(),
+		noteKeyMap:  pianoNotes.ToBindingMap(),
+		midiPlayer:  midiPlayer,
+		audioPlayer: &audioPlayer{mixer: &beep.Mixer{}},
+		sampleRate:  sr,
+		log:         log.Default(),
 	}
+
+	speaker.Play(m.audioPlayer.mixer)
+	return m, nil
 }
 
 func (m model) Init() tea.Cmd {
@@ -173,21 +205,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chatBox, cmd = m.chatBox.Update(msg)
 			cmds = append(cmds, cmd)
 		case pianoFocus:
-			// TODO: play the piano
-			// - highlight the key play
-			// - run send note command
+			// TODO: highlight the key play
+			cmds = append(cmds, m.sendMIDIMessage(msg.String()))
 		}
 		// *** End KeyMsg ***
 		return m, tea.Batch(cmds...)
 
 	// Entered the Jam Session
 	case ConnectedMsg:
-		m.Socket = msg.WS
+		m.wsClient = &wsClient{conn: msg.WS}
 		m.ID = msg.JamID
 		cmds = append(cmds, m.listenSocket())
 
 	case chatui.SendMsg:
-		cmds = append(cmds, m.sendTextMessage(msg.Msg, m.userName))
+		cmds = append(cmds, m.sendTextMessage(msg.Msg))
 	case sentMsg:
 		// TODO Delete me after testing vv
 		// Curious if this time includes latency.
@@ -222,8 +253,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd, m.listenSocket())
 	case recvMIDIMsg:
 		m.curMidiMsg = msg.msg
+
+		// TODO: Move to envelope msg handler (not just text)
+		latest := m.rtTimer.Stop(msg.id.String())
+		m.pingStats = m.pingStats.Calc(latest)
+		pingCmd := func() tea.Msg { return StatsMsg(m.pingStats) }
+
+		// Play MIDI on speakers
+		cmd = m.playMIDI(msg.msg)
 		// Start listening again
-		cmds = append(cmds, cmd, m.listenSocket())
+		cmds = append(cmds, cmd, m.listenSocket(), pingCmd)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -237,30 +276,19 @@ func (m model) View() string {
 		docStyle = docStyle.MaxWidth(physicalWidth)
 	}
 
-	// Keyboard
-	keyboard := lipgloss.JoinHorizontal(lipgloss.Top,
-		pianoKeyStyle.Render("C5"+"\n\n"+"(q)"),
-		pianoKeyStyle.Render("D5"+"\n\n"+"(w)"),
-		pianoKeyStyle.Render("E5"+"\n\n"+"(e)"),
-		pianoKeyStyle.Render("F5"+"\n\n"+"(r)"),
-		pianoKeyStyle.Render("G5"+"\n\n"+"(t)"),
-		pianoKeyStyle.Render("A5"+"\n\n"+"(y)"),
-		pianoKeyStyle.Render("B5"+"\n\n"+"(u)"),
-		pianoKeyStyle.Render("C6"+"\n\n"+"(i)"),
-	)
 	doc.WriteString(m.chatBox.View())
-	doc.WriteString(keyboard + "\n\n")
+	doc.WriteString(m.renderPiano() + "\n\n")
 	return docStyle.Render(doc.String())
 }
 
 // LeaveRoom disconnects from the room and sends a LeaveRoom message.
 func (m model) leaveRoom() tea.Cmd {
 	return func() tea.Msg {
-		if m.Socket == nil {
+		if m.wsClient.conn == nil {
 			return LeaveRoomMsg{}
 		}
 		// Send websocket close message
-		err := m.Socket.WriteControl(
+		err := m.wsClient.conn.WriteControl(
 			websocket.CloseMessage,
 			nil,
 			time.Now().Add(time.Second*10),
@@ -277,7 +305,7 @@ func (m model) listenSocket() tea.Cmd {
 	// https://github.com/charmbracelet/bubbletea/issues/25#issuecomment-732339162
 	return func() tea.Msg {
 		var message wsmsg.Envelope
-		err := m.Socket.ReadJSON(&message)
+		err := m.wsClient.readMsg(&message)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				return rmxerr.ErrMsg{Err: fmt.Errorf("readJSON: unexpected close: %w", err)}
@@ -317,8 +345,9 @@ func (m model) listenSocket() tea.Cmd {
 			if err := message.Unwrap(&midiMsg); err != nil {
 				return rmxerr.ErrMsg{Err: fmt.Errorf("unmarshal MIDIMsg: %+v\n%w", message, err)}
 			}
-			m.log.Println(midiMsg)
+			m.log.Printf("MIDI received: %+v\n", midiMsg)
 			return recvMIDIMsg{
+				id:  message.ID,
 				msg: midiMsg,
 			}
 		default:
@@ -328,14 +357,14 @@ func (m model) listenSocket() tea.Cmd {
 
 }
 
-func (m model) sendTextMessage(body, displayName string) tea.Cmd {
+func (m model) sendTextMessage(body string) tea.Cmd {
 	return func() tea.Msg {
 		envelope := wsmsg.Envelope{
 			ID:     uuid.New(),
 			Typ:    wsmsg.TEXT,
 			UserID: m.userID,
 		}
-		textMsg := wsmsg.TextMsg{Body: body, DisplayName: displayName}
+		textMsg := wsmsg.TextMsg{Body: body, DisplayName: m.userName}
 		err := envelope.SetPayload(textMsg)
 		if err != nil {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("marshal: %w", err)}
@@ -343,7 +372,7 @@ func (m model) sendTextMessage(body, displayName string) tea.Cmd {
 
 		// Curious to see how long WriteJSON takes
 		preSendTime := time.Now()
-		err = m.Socket.WriteJSON(envelope)
+		err = m.wsClient.conn.WriteJSON(envelope)
 		if err != nil {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("writeJSON: %w", err)}
 		}
@@ -352,4 +381,88 @@ func (m model) sendTextMessage(body, displayName string) tea.Cmd {
 			sentAt: preSendTime,
 		}
 	}
+}
+
+func (m model) sendMIDIMessage(keyPressed string) tea.Cmd {
+	return func() tea.Msg {
+		midiNum := m.noteKeyMap[keyPressed].MIDI
+		if !vpiano.InRange(midiNum) {
+			return nil
+		}
+
+		msg := wsmsg.MIDIMsg{
+			State:    wsmsg.NOTE_ON,
+			Velocity: 127,
+			Number:   midiNum,
+		}
+
+		envelope := wsmsg.Envelope{
+			ID:     uuid.New(),
+			Typ:    wsmsg.MIDI,
+			UserID: m.userID,
+		}
+
+		if err := envelope.SetPayload(msg); err != nil {
+			return rmxerr.ErrMsg{Err: fmt.Errorf("marshal: %w", err)}
+		}
+		if err := m.wsClient.writeMsg(envelope); err != nil {
+			return rmxerr.ErrMsg{Err: fmt.Errorf("writeJSON: %w", err)}
+		}
+		return sentMsg{
+			id:     envelope.ID,
+			sentAt: time.Now(),
+		}
+	}
+}
+
+// PlayMIDI plays the given MIDI note through system audio.
+func (m *model) playMIDI(note wsmsg.MIDIMsg) tea.Cmd {
+	return func() tea.Msg {
+		// NOTE_OFF messages are not really going to work with a virtual keyboard
+		// or with sending realtime messages, so we have to use some arbitrary duration to play the note.
+		// TODO: Maybe control duration with some other key
+		duration := time.Second * 2
+		s := midi.NewMIDIStreamer(duration)
+
+		// Render MIDI note to audio streamer buffer
+		if err := m.midiPlayer.Render(note, s); err != nil {
+			return rmxerr.ErrMsg{Err: err}
+		}
+
+		// Take n seconds worth of samples @ 44.1khz from the audio streamer and
+		// add it to the main speaker mix.
+		m.audioPlayer.addToMix(beep.Take(m.sampleRate.N(duration), s))
+
+		return nil
+	}
+}
+
+func (m model) renderPiano() string {
+	pianoKeys := make([]string, 0)
+	for _, v := range m.pianoNotes {
+		if v.IsAccidental {
+			// TODO: Figure out black keys
+			continue
+		}
+		pianoKeys = append(pianoKeys,
+			pianoKeyStyle.Render(lipgloss.JoinVertical(lipgloss.Top, v.Name, "\n", fmt.Sprintf("(%s)", v.KeyBinding))),
+		)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, pianoKeys...)
+}
+
+func (c *wsClient) readMsg(out *wsmsg.Envelope) error {
+	return c.conn.ReadJSON(out)
+}
+
+func (c *wsClient) writeMsg(envelope wsmsg.Envelope) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn.WriteJSON(envelope)
+}
+
+func (a *audioPlayer) addToMix(s beep.Streamer) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.mixer.Add(s)
 }
