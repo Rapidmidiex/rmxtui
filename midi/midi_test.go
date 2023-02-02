@@ -19,7 +19,7 @@ func TestMIDItoAudio(t *testing.T) {
 	bufLen := sr.N(time.Millisecond * 20)
 	noteDuration := time.Second * 5
 	speaker.Init(sr, bufLen)
-	player, err := midi.NewPlayer(midi.NewPlayerOpts{
+	synth, err := midi.NewSynth(midi.NewSynthOpts{
 		SoundFontName: midi.GeneralUser,
 	})
 	require.NoError(t, err)
@@ -32,7 +32,7 @@ func TestMIDItoAudio(t *testing.T) {
 		}
 
 		streamer := midi.NewMIDIStreamer(noteDuration)
-		player.Play(msg, streamer)
+		synth.Render(msg, streamer)
 
 		done := make(chan bool)
 
@@ -50,21 +50,21 @@ func TestMIDItoAudio(t *testing.T) {
 
 	t.Run("plays multiple notes at once", func(t *testing.T) {
 		streamer1 := midi.NewMIDIStreamer(noteDuration)
-		player.Play(wsmsg.MIDIMsg{
+		synth.Render(wsmsg.MIDIMsg{
 			State:    wsmsg.NOTE_ON,
 			Number:   70, // Bb4
 			Velocity: 127,
 		}, streamer1)
 
 		streamer2 := midi.NewMIDIStreamer(noteDuration)
-		player.Play(wsmsg.MIDIMsg{
+		synth.Render(wsmsg.MIDIMsg{
 			State:    wsmsg.NOTE_ON,
 			Number:   67, // G4
 			Velocity: 127,
 		}, streamer2)
 
 		streamer3 := midi.NewMIDIStreamer(noteDuration)
-		player.Play(wsmsg.MIDIMsg{
+		synth.Render(wsmsg.MIDIMsg{
 			State:    wsmsg.NOTE_ON,
 			Number:   76, // E5
 			Velocity: 108,
@@ -93,16 +93,16 @@ func TestMIDItoAudio(t *testing.T) {
 
 	t.Run("plays chords", func(t *testing.T) {
 		streamer1 := midi.NewMIDIStreamer(noteDuration)
-		player.Play(wsmsg.MIDIMsg{
+		synth.Render(wsmsg.MIDIMsg{
 			State:    wsmsg.NOTE_ON,
-			Number:   67, // G4
+			Number:   40,
 			Velocity: 127,
 		}, streamer1)
 
 		streamer2 := midi.NewMIDIStreamer(noteDuration)
-		player.Play(wsmsg.MIDIMsg{
+		synth.Render(wsmsg.MIDIMsg{
 			State:    wsmsg.NOTE_ON,
-			Number:   76, // E5
+			Number:   42,
 			Velocity: 108,
 		}, streamer2)
 

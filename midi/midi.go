@@ -18,16 +18,16 @@ const (
 )
 
 type (
-	Player struct {
+	Synth struct {
 		// SoundFonts available in the embedded FS.
 		soundFontPaths map[SoundFontName]string
-		synth          *meltysynth.Synthesizer
+		soundFont      *meltysynth.SoundFont
 		synthSettings  *meltysynth.SynthesizerSettings
 	}
 
 	SoundFontName int
 
-	NewPlayerOpts struct {
+	NewSynthOpts struct {
 		// Name of SoundFont to use for the synthesizer.
 		SoundFontName SoundFontName
 	}
@@ -39,7 +39,8 @@ type (
 	}
 )
 
-func NewPlayer(o NewPlayerOpts) (Player, error) {
+// NewSynth creates a new synthesizer which can be used to render MIDI notes to audio buffers with the given sound font.
+func NewSynth(o NewSynthOpts) (Synth, error) {
 	soundFonts := map[SoundFontName]string{
 		GeneralUser: "GeneralUser_GS_MuseScore_v1.442.sf2",
 		// TODO: Add more as needed
@@ -51,36 +52,42 @@ func NewPlayer(o NewPlayerOpts) (Player, error) {
 		path.Join("sound_fonts", soundFonts[o.SoundFontName]),
 	)
 	if err != nil {
-		return Player{}, err
+		return Synth{}, err
 	}
 	soundFont, _ := meltysynth.NewSoundFont(sf2)
 	sf2.Close()
 
 	// Create the synthesizer.
 	settings := meltysynth.NewSynthesizerSettings(44100)
-	synthesizer, _ := meltysynth.NewSynthesizer(soundFont, settings)
 
-	return Player{
+	return Synth{
 		soundFontPaths: soundFonts,
-		synth:          synthesizer,
 		synthSettings:  settings,
+		soundFont:      soundFont,
 	}, nil
 }
 
-// Play synthesizes the given MIDI note and write the audio data to the streamer's left/right buffers.
-func (p Player) Play(msg wsmsg.MIDIMsg, streamer *MidiStreamer) {
+// Render synthesizes the given MIDI note and write the audio data to the streamer's left/right buffers.
+func (p Synth) Render(msg wsmsg.MIDIMsg, streamer *MidiStreamer) error {
 	note := int32(msg.Number)
 	vel := int32(msg.Velocity)
 
+	// Create a new synth on every note to prevent race conditions with using the same synth buffers when notes are played concurrently.
+	synth, err := meltysynth.NewSynthesizer(p.soundFont, p.synthSettings)
+	if err != nil {
+		return fmt.Errorf("newSynthesizer: %w", err)
+	}
+
 	switch msg.State {
 	case wsmsg.NOTE_ON:
-		p.synth.NoteOn(0, note, vel)
+		synth.NoteOn(0, note, vel)
 	case wsmsg.NOTE_OFF:
-		p.synth.NoteOff(0, note)
+		synth.NoteOff(0, note)
 	}
 
 	// Render the waveform.
-	p.synth.Render(streamer.left, streamer.right)
+	synth.Render(streamer.left, streamer.right)
+	return nil
 }
 
 func NewMIDIStreamer(clipLength time.Duration) *MidiStreamer {
@@ -135,7 +142,7 @@ func (ms *MidiStreamer) Read(outLeft, outRight []float32) (int, error) {
 	nRead := 0
 	for i := range outLeft {
 		readPos := i + ms.pos
-		if readPos > len(ms.left) {
+		if readPos >= len(ms.left) {
 			return nRead, fmt.Errorf("index is out of range: %d", readPos)
 		}
 		outLeft[i] = ms.left[readPos]
