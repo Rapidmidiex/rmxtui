@@ -240,9 +240,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// TODO: Move to envelope msg handler (not just text)
 		latest := m.rtTimer.Stop(msg.ID.String())
-		m.pingStats = m.pingStats.Calc(latest)
-		pingCmd := func() tea.Msg { return StatsMsg(m.pingStats) }
-
+		var pingCmd tea.Cmd
+		if latest > -1 {
+			m.pingStats = m.pingStats.Calc(latest)
+			pingCmd = func() tea.Msg { return StatsMsg(m.pingStats) }
+		}
 		// Start listening again
 		cmds = append(cmds, cmd, m.listenSocket(), pingCmd)
 
@@ -256,8 +258,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// TODO: Move to envelope msg handler (not just text)
 		latest := m.rtTimer.Stop(msg.id.String())
-		m.pingStats = m.pingStats.Calc(latest)
-		pingCmd := func() tea.Msg { return StatsMsg(m.pingStats) }
+		var pingCmd tea.Cmd
+		if latest > -1 {
+			m.pingStats = m.pingStats.Calc(latest)
+			pingCmd = func() tea.Msg { return StatsMsg(m.pingStats) }
+		}
 
 		// Play MIDI on speakers
 		cmd = m.playMIDI(msg.msg)
