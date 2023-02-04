@@ -4,3 +4,6 @@
 # copylocks: return copies lock value: github.com/rapidmidiex/rmxtui.mainModel contains log.Logger contains sync.Mutex
 linters = [ "govet" ]
 text = "log.Logger"
+
+[run]
+modules-download-mode = "readonly"
