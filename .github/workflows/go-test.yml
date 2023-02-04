@@ -7,6 +7,9 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
+      - name : Install dependencies
+        run: apt update && apt install -y libasound2-dev
+
       - name: Set up Go
         uses: actions/setup-go@v2
         with:

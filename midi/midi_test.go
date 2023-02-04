@@ -1,6 +1,7 @@
 package midi_test
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -12,6 +13,10 @@ import (
 )
 
 func TestMIDItoAudio(t *testing.T) {
+	if os.Getenv("CI") == "true" {
+		t.Skip("No audio device in CI env")
+	}
+
 	sr := beep.SampleRate(44100)
 	// TODO: Determine buffer length sweet spot.
 	// Bigger -> less CPU, slower response
