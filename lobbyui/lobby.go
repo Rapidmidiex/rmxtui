@@ -39,7 +39,7 @@ func (m Model) listJams() tea.Cmd {
 	return func() tea.Msg {
 		// Create an HTTP client and make a GET request.
 		c := &http.Client{Timeout: 10 * time.Second}
-		res, err := c.Get(m.apiURL + "/jam")
+		res, err := c.Get(m.apiURL + "/jams")
 		if err != nil {
 			// There was an error making our request. Wrap the error we received
 			// in a message and return it.
@@ -49,7 +49,7 @@ func (m Model) listJams() tea.Cmd {
 		// Return the HTTP status code
 		// as a message.
 		if res.StatusCode >= 400 {
-			return rmxerr.ErrMsg{Err: fmt.Errorf("could not get sessions: %d", res.StatusCode)}
+			return rmxerr.ErrMsg{Err: fmt.Errorf("could not get sessions: %s %d", res.Request.URL.Path, res.StatusCode)}
 		}
 		decoder := json.NewDecoder(res.Body)
 		var resp jamsResp
@@ -202,7 +202,7 @@ func jamCreate(baseURL string) tea.Cmd {
 	// Next step would be to show inputs for Jam details
 	// (name, bpm, etc) before creating the Jam.
 	return func() tea.Msg {
-		resp, err := http.Post(baseURL+"/jam", "application/json", strings.NewReader("{}"))
+		resp, err := http.Post(baseURL+"/jams", "application/json", strings.NewReader("{}"))
 		if err != nil {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("jamCreate: %v", err)}
 		}
