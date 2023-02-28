@@ -60,22 +60,17 @@ var (
 )
 
 func NewModel(serverHostURL string, debugMode bool) (mainModel, error) {
-	wsHostURL, err := url.Parse(serverHostURL)
-	if err != nil {
-		return mainModel{}, err
-	}
-
-	wsHostURL.Scheme = "ws" + strings.TrimPrefix(wsHostURL.Scheme, "http")
 	jamModel, err := jamui.New()
 	if err != nil {
 		return mainModel{}, err
 	}
+	restEndpoint := serverHostURL + "/v0"
 	return mainModel{
 		curView:      lobbyView,
-		lobby:        lobbyui.New(serverHostURL + "/api/v1"),
+		lobby:        lobbyui.New(serverHostURL + "/v0"),
 		jam:          jamModel,
-		RESTendpoint: serverHostURL + "/api/v1",
-		WSendpoint:   wsHostURL.String() + "/ws",
+		RESTendpoint: restEndpoint,
+		WSendpoint:   strings.Replace(restEndpoint, "http", "ws", 1),
 		log:          *log.Default(),
 	}, nil
 }
@@ -135,8 +130,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m mainModel) View() string {
 	physicalWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
 	doc := strings.Builder{}
-
-	status := fmt.Sprintf("server: %s", formatHost(m.RESTendpoint))
+	serverLine := fmt.Sprintf("server: %s", formatHost(m.RESTendpoint))
+	status := serverLine
 	statusKeyText := "STATUS"
 
 	rttStats := "--"
@@ -156,7 +151,7 @@ func (m mainModel) View() string {
 	}
 
 	if m.curError != nil {
-		status = styles.RenderError(fmt.Sprint(m.curError))
+		status = styles.RenderError(lipgloss.JoinVertical(lipgloss.Top, fmt.Sprint(m.curError), serverLine))
 		statusKeyText = "ERROR"
 	}
 
@@ -212,7 +207,7 @@ func bail(err error) {
 
 func (m mainModel) jamConnect(jamID string) tea.Cmd {
 	return func() tea.Msg {
-		jURL := m.WSendpoint + "/jam/" + jamID
+		jURL := fmt.Sprintf("%s/jams/%s/ws", m.WSendpoint, jamID)
 		ws, _, err := websocket.DefaultDialer.Dial(jURL, nil)
 		if err != nil {
 			return rmxerr.ErrMsg{Err: fmt.Errorf("jamConnect: %v\n%v", jURL, err)}

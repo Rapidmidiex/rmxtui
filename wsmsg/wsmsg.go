@@ -3,6 +3,7 @@ package wsmsg
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/google/uuid"
 )
@@ -63,4 +64,36 @@ func (e *Envelope) SetPayload(payload any) error {
 
 func (e *Envelope) Unwrap(msg any) error {
 	return json.Unmarshal(e.Payload, msg)
+}
+
+func (t *MsgType) UnmarshalJSON(data []byte) error {
+	var rawType string
+	err := json.Unmarshal(data, &rawType)
+	if err != nil {
+		return err
+	}
+
+	switch rawType {
+	case "connect":
+		*t = CONNECT
+	case "midi":
+		*t = MIDI
+	case "text":
+		*t = TEXT
+	default:
+		return fmt.Errorf("unknown type: %s", rawType)
+	}
+	return nil
+}
+
+func (t *MsgType) MarshalJSON() ([]byte, error) {
+	switch *t {
+	case CONNECT:
+		return []byte(`"connect"`), nil
+	case MIDI:
+		return []byte(`"midi"`), nil
+	case TEXT:
+		return []byte(`"text"`), nil
+	}
+	return []byte{}, fmt.Errorf("unknown MsgTyp value: %d", *t)
 }
